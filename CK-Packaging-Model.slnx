@@ -1,2 +1,13 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="nuget.config" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/CK.Packaging.Model.Tests/CK.Packaging.Model.Tests.csproj" Id="3bf6ffbd-1ec7-497e-b424-aa4a75a4cdb9" />
+  </Folder>
+  <Project Path="CK.Packaging.Model/CK.Packaging.Model.csproj" Id="6a4baa71-d209-41d4-a1c9-513bed5fd6a9" />
 </Solution>
