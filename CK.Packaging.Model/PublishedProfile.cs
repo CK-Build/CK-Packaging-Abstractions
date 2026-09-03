@@ -20,17 +20,20 @@ public sealed class PublishedProfile
     readonly SVersion _version;
     readonly ImmutableArray<Repository> _repositories;
     readonly Dictionary<string,PackageInstance> _packages;
+    readonly bool _isDeprecated;
     string? _toString;
 
     public PublishedProfile( Uri stackUrl,
                              WorldName world,
                              SVersion version,
-                             ImmutableArray<Repository> repositories )
+                             ImmutableArray<Repository> repositories,
+                             bool isDeprecated )
     {
         _stackUrl = stackUrl;
         _world = world;
         _version = version;
         _repositories = repositories;
+        _isDeprecated = isDeprecated;
         _packages = repositories.SelectMany( r => r.Packages ).ToDictionary( p => p.PackageId );
     }
 
@@ -43,6 +46,11 @@ public sealed class PublishedProfile
     /// Gets the world name.
     /// </summary>
     public WorldName World => _world;
+
+    /// <summary>
+    /// Gets whether this profile is deprecated: at least one package has been deprecated.
+    /// </summary>
+    public bool IsDeprecated => _isDeprecated;
 
     /// <summary>
     /// Gets the version. <see cref="SVersion.VersionKind"/> is necessarily
