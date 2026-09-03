@@ -3,11 +3,12 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace CK.Packaging.Model;
 
 /// <summary>
-/// Defines a set of package instances that have been produced by a CKli world and are coherent: their dependencies
+/// Immutable set of package instances that have been produced by a CKli world and are coherent: their dependencies
 /// are homogeneous, no discrepancy exists among them.
 /// <para>
 /// Note that the coherency can be only a shallow one. deeper, transitive, dependencies are not guaranteed to be aligned.
@@ -28,13 +29,28 @@ public sealed class PublishedProfile
                              SVersion version,
                              ImmutableArray<Repository> repositories,
                              bool isDeprecated )
+        : this( stackUrl, world, version, repositories, repositories.SelectMany( r => r.Packages ).ToDictionary( p => p.PackageId ), isDeprecated )
     {
+    }
+
+    PublishedProfile( Uri stackUrl,
+                      WorldName world,
+                      SVersion version,
+                      ImmutableArray<Repository> repositories,
+                      Dictionary<string, PackageInstance> packages,
+                      bool isDeprecated )
+    {
+        if( version.VersionKind == CSVersionKind.None )
+        {
+            throw new ArgumentException( $"Version '{version}' must be a Conformant SVersion." );
+        }
         _stackUrl = stackUrl;
         _world = world;
         _version = version;
         _repositories = repositories;
+        _packages = packages;
+        _packages = packages;
         _isDeprecated = isDeprecated;
-        _packages = repositories.SelectMany( r => r.Packages ).ToDictionary( p => p.PackageId );
     }
 
     /// <summary>
@@ -69,10 +85,19 @@ public sealed class PublishedProfile
     public Dictionary<string, PackageInstance> Packages => _packages;
 
     /// <summary>
+    /// Updater that transitions <see cref="IsDeprecated"/> to true.
+    /// </summary>
+    /// <returns>This profile or a new one.</returns>
+    public PublishedProfile Deprecate() => _isDeprecated
+                                                ? this
+                                                : new PublishedProfile( _stackUrl, _world, _version, _repositories, _packages, true );
+
+    /// <summary>
     /// Overridden to return the <see cref="World"/> and <see cref="Version"/>.
     /// </summary>
     /// <returns>A readable string.</returns>
     public override string ToString() => _toString ??= $"{_world.FullName}/v{_version}";
+
 }
 
 

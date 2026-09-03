@@ -6,57 +6,50 @@ using System.IO;
 
 namespace CK.Packaging.Model;
 
+/// <summary>
+/// Mutable set of <see cref="PublishedProfile"/> identified by their <see cref="PublishedProfile.Version"/>.
+/// </summary>
 public sealed partial class PublishedFolder
 {
-    readonly Dictionary<string, Branch> _branches;
+    readonly Dictionary<SVersion, PublishedProfile> _profiles;
 
     /// <summary>
     /// Initializes a new empty folder.
     /// </summary>
     public PublishedFolder()
     {
-        _branches = new Dictionary<string, Branch>();
+        _profiles = new Dictionary<SVersion, PublishedProfile>();
     }
 
     /// <summary>
-    /// Gets the <see cref="Branch"/> that contains the <see cref="Branch.Profiles"/>.
+    /// Gets the profiles in indexed by their <see cref="PublishedProfile.Version"/>.
     /// </summary>
-    public IReadOnlyDictionary<string, Branch> Branches => _branches;
-
-
-    /// <summary>
-    /// Finds a <see cref="PublishedProfile"/> from its <see cref="PublishedProfile.Version"/>.
-    /// </summary>
-    /// <param name="version">The profile version.</param>
-    /// <returns>The profile or null.</returns>
-    public PublishedProfile? Find( SVersion version )
-    {
-        var bName = version.BranchName;
-        if( ) return null;
-        if( bName == null
-            || !_branches.TryGetValue( bName, out var branch ) )
-        {
-            return null;
-        }
-        return branch.Find( version );
-    }
+    public IReadOnlyDictionary<SVersion, PublishedProfile> Profiles => _profiles;
 
     /// <summary>
-    /// Adds a profile or throw an <see cref="InvalidOperationException "/> if a profile
-    /// with the same <see cref="PublishedProfile.Version"/> already exists.
+    /// Adds a profile. Throw if a profile with the same <see cref="PublishedProfile.Version"/> already exists.
     /// </summary>
-    /// <param name="profile"></param>
+    /// <param name="profile">The profile to add.</param>
     public void Add( PublishedProfile profile )
     {
-        var version = profile.Version;
-        Debug.Assert( version.BranchName != null, "Version is a CSVersion." );
-        var bName = version.BranchName;
-        if( !_branches.TryGetValue( bName, out var branch ) )
-        {
-            branch = new Branch( bName, version.VersionKind );
-        }
-        branch.Add( profile );
+        _profiles.Add( profile.Version, profile );
     }
+
+    /// <summary>
+    /// Deprecates a profile. This is idempotent and doesn't require the profile to exist.
+    /// </summary>
+    /// <param name="version">The version to deprecate.</param>
+    /// <returns>True if the profile has been found and actually deprecated. False otherwise.</returns>
+    public bool Deprecate( SVersion version )
+    {
+        if( _profiles.TryGetValue( version, out var profile ) && !profile.IsDeprecated )
+        {
+            _profiles[version] = profile.Deprecate();
+            return true;
+        }
+        return false;
+    }
+
 }
 
 
