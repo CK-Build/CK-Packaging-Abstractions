@@ -93,6 +93,17 @@ public sealed class PublishedProfile
                                                 : new PublishedProfile( _stackUrl, _world, _version, _repositories, _packages, true );
 
     /// <summary>
+    /// Updater that <see cref="Deprecate()"/> this profile if the package appears in <see cref="Packages"/>.
+    /// </summary>
+    /// <returns>This profile or a new one.</returns>
+    public PublishedProfile OnDeprecatedPackage( string packageId, SVersion version )
+    {
+        return _isDeprecated || !_packages.TryGetValue( packageId, out var p ) || p.Version != version
+                ? this
+                : Deprecate();
+    }
+
+    /// <summary>
     /// Overridden to return the <see cref="World"/> and <see cref="Version"/>.
     /// </summary>
     /// <returns>A readable string.</returns>
