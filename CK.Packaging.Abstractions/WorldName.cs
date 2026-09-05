@@ -8,6 +8,9 @@ namespace CK.Core;
 /// Immutable implementation of a world name: a <see cref="StackName"/> alone for the default
 /// world, or <see cref="StackName"/><see cref="LTSName"/> for a Long Term Support world (LTSName
 /// always starts with '@').
+/// <para>
+/// This class is not sealed, it can be specialized.
+/// </para>
 /// </summary>
 public partial class WorldName : IEquatable<WorldName>
 {

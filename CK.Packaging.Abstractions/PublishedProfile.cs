@@ -2,6 +2,7 @@ using CK.Core;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.IO;
 
 namespace CK.Packaging.Abstractions;
 
@@ -184,4 +185,28 @@ public sealed partial class PublishedProfile
     /// </summary>
     /// <returns>A readable string.</returns>
     public override string ToString() => _toString ??= $"{_world.FullName}/v{_version}";
+
+    /// <summary>
+    /// Gets a path that identifies or locates a profile representation of a version.
+    /// </summary>
+    /// <param name="version">The version. Must be a Conformant SVersion.</param>
+    /// <param name="prefix">Optional prefix. Typically ends with <paramref name="directorySeparator"/>.</param>
+    /// <param name="suffix">Optional suffix. Typically an extension (".json").</param>
+    /// <param name="directorySeparator">Directory separator to use.</param>
+    /// <returns>The associated path.</returns>
+    public static string GetProfilePath( SVersion version, ReadOnlySpan<char> prefix = default, ReadOnlySpan<char> suffix = default, char directorySeparator = '/' )
+    {
+        ArgumentNullException.ThrowIfNull( version );
+        var branchName = version.BranchName;
+        if( branchName == null )
+        {
+            throw new ArgumentException( $"Version '{version}' must be a Conformant SVersion.", nameof( version ) );
+        }
+        // BranchName is the empty string for stable versions (and their CI builds) and can
+        // contain a '/' for exploratory versions ("explo/{name}").
+        return branchName.Length == 0
+                ? $"{prefix}v{version}{suffix}"
+                : $"{prefix}{branchName.Replace( '/', directorySeparator )}{directorySeparator}v{version}{suffix}";
+    }
+
 }
