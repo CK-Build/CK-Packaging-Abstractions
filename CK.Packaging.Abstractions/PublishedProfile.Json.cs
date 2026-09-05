@@ -53,8 +53,8 @@ public sealed partial class PublishedProfile
     }
 
     /// <summary>
-    /// Gets the utf-8 Json representation of this profile. This is what is stored
-    /// by a <see cref="PublishedFolder"/>.
+    /// Gets the utf-8 Json representation of this profile. This is what is stored in a
+    /// profile file.
     /// </summary>
     /// <param name="indented">False to obtain a compact representation.</param>
     /// <returns>The utf-8 Json bytes.</returns>
