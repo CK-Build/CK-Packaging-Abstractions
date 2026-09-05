@@ -16,7 +16,7 @@
     </ItemGroup>
     
     <ItemGroup>
-        <ProjectReference Include="..\..\CK.Packaging.Model\CK.Packaging.Model.csproj" />
+        <ProjectReference Include="..\..\CK.Packaging.Abstractions\CK.Packaging.Abstractions.csproj" />
     </ItemGroup>
 
 </Project>

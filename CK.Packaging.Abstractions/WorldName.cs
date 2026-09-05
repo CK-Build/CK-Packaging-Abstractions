@@ -193,11 +193,11 @@ public partial class WorldName : IEquatable<WorldName>
         return name;
     }
 
-    [GeneratedRegex( "[a-zA-Z][0-9a-zA-Z_-]+", RegexOptions.CultureInvariant )]
+    // The whole name must match: without the \A...\z anchors, IsMatch only requires the
+    // pattern to appear somewhere in the name ("no way!" would be a valid repository name).
+    [GeneratedRegex( @"\A[a-zA-Z][0-9a-zA-Z_-]+\z", RegexOptions.CultureInvariant )]
     private static partial Regex ValidRepoName();
 
-    [GeneratedRegex( "@[0-9a-z._-]{2,}", RegexOptions.CultureInvariant )]
+    [GeneratedRegex( @"\A@[0-9a-z._-]{2,}\z", RegexOptions.CultureInvariant )]
     private static partial Regex ValidLTSName();
 }
-
-

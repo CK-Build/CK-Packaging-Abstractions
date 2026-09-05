@@ -15,6 +15,11 @@ namespace CK.Core;
 /// </summary>
 public readonly struct RandomId : ISpanParsable<RandomId>, IEquatable<RandomId>, IComparable<RandomId>
 {
+    /// <summary>
+    /// The length of the string representation of an identifier: 8 bytes Base64Url encoded.
+    /// </summary>
+    public const int StringLength = 11;
+
     static readonly string _invalidString = "AAAAAAAAAAA";
     readonly string? _s;
 
@@ -49,13 +54,18 @@ public readonly struct RandomId : ISpanParsable<RandomId>, IEquatable<RandomId>,
     }
 
     /// <summary>
-    /// Initializes a new repository identifier. Throws if the string is a valid Base64Url encoded unsigned long.
+    /// Initializes a new repository identifier from its string representation. Throws a
+    /// <see cref="FormatException"/> if the string is not a <see cref="StringLength"/> characters
+    /// Base64Url encoded unsigned long.
+    /// <para>
+    /// "AAAAAAAAAAA" is valid: it is the invalid identifier (<see cref="IsValid"/> is false).
+    /// </para>
     /// </summary>
     /// <param name="s">The string value.</param>
     public RandomId( string s )
     {
-        _s = s;
-        if( s != null ) Base64Url.DecodeFromChars( s, MemoryMarshal.AsBytes( new Span<ulong>( ref Value ) ) );
+        ArgumentNullException.ThrowIfNull( s );
+        this = Parse( s.AsSpan() );
     }
 
     /// <inheritdoc />
@@ -107,13 +117,13 @@ public readonly struct RandomId : ISpanParsable<RandomId>, IEquatable<RandomId>,
     /// <returns>True on success, false otherwise.</returns>
     public static bool TryMatch( ref ReadOnlySpan<char> head, out RandomId id )
     {
-        if( head.Length >= 11 )
+        if( head.Length >= StringLength )
         {
             ulong value = 0;
             var s = new Span<ulong>( ref value );
             Span<byte> bytes = MemoryMarshal.AsBytes( s );
-            var op = Base64Url.DecodeFromChars( head.Slice( 0, 11 ), bytes, out int charsConsumed, out int bytesWritten );
-            if( op == OperationStatus.Done && charsConsumed == 11 )
+            var op = Base64Url.DecodeFromChars( head.Slice( 0, StringLength ), bytes, out int charsConsumed, out int bytesWritten );
+            if( op == OperationStatus.Done && charsConsumed == StringLength && bytesWritten == sizeof( ulong ) )
             {
                 id = new RandomId( value, new string( head.Slice( 0, charsConsumed ) ) );
                 head = head.Slice( charsConsumed );
@@ -125,12 +135,18 @@ public readonly struct RandomId : ISpanParsable<RandomId>, IEquatable<RandomId>,
     }
 
     /// <summary>
-    /// Tries to parse an identifier. It can be the invalid one.
+    /// Tries to parse an identifier. The whole <paramref name="s"/> must be the identifier.
+    /// It can be the invalid one ("AAAAAAAAAAA").
     /// </summary>
     /// <param name="s">The text to parse.</param>
     /// <param name="id">The result.</param>
     /// <returns>True on success, false otherwise.</returns>
-    public static bool TryParse( ReadOnlySpan<char> s, out RandomId id ) => TryMatch( ref s, out id );
+    public static bool TryParse( ReadOnlySpan<char> s, out RandomId id )
+    {
+        if( TryMatch( ref s, out id ) && s.Length == 0 ) return true;
+        id = default;
+        return false;
+    }
 
     /// <summary>
     /// Tries to parse an identifier or throws a <see cref="FormatException"/>.
@@ -139,8 +155,8 @@ public readonly struct RandomId : ISpanParsable<RandomId>, IEquatable<RandomId>,
     /// <returns>The parsed identifier.</returns>
     public static RandomId Parse( ReadOnlySpan<char> s )
     {
-        if( TryMatch( ref s, out var id ) ) return id;
-        throw new FormatException( "Invalid RepoId." );
+        if( TryParse( s, out var id ) ) return id;
+        throw new FormatException( $"Invalid RandomId: '{s}'." );
     }
 
     static RandomId ISpanParsable<RandomId>.Parse( ReadOnlySpan<char> s, IFormatProvider? provider )
@@ -151,7 +167,7 @@ public readonly struct RandomId : ISpanParsable<RandomId>, IEquatable<RandomId>,
     /// <inheritdoc />
     static bool ISpanParsable<RandomId>.TryParse( ReadOnlySpan<char> s, IFormatProvider? provider, [MaybeNullWhen( false )] out RandomId result )
     {
-        return TryMatch( ref s, out result );
+        return TryParse( s, out result );
     }
 
     /// <inheritdoc />
@@ -182,5 +198,3 @@ public readonly struct RandomId : ISpanParsable<RandomId>, IEquatable<RandomId>,
 
 #pragma warning restore CS1591 // Missing XML comment for publicly visible type or member
 }
-
-
