@@ -120,13 +120,7 @@ public sealed class Repository
                     id = JsonHelper.GetRandomId( ref r, name );
                     break;
                 case "Packages":
-                    JsonHelper.EnsureStartArray( ref r, name );
-                    packages = ImmutableArray.CreateBuilder<PackageInstance>();
-                    while( r.Read() && r.TokenType != JsonTokenType.EndArray )
-                    {
-                        packages.Add( JsonHelper.GetPackageInstance( ref r, name ) );
-                    }
-                    JsonHelper.EnsureEndArray( ref r, name );
+                    packages = JsonHelper.ReadPackageInstances( ref r, name );
                     break;
                 default:
                     r.Skip();

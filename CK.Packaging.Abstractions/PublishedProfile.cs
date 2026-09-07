@@ -13,7 +13,14 @@ namespace CK.Packaging.Abstractions;
 /// Note that the coherency can be only a shallow one. deeper, transitive, dependencies are not guaranteed to be aligned.
 /// </para>
 /// <para>
-/// A profile offers at most one version of a package identifier: this is checked by the constructor.
+/// A profile carries at most one version of a package identifier: this is checked by the constructor, for
+/// its <see cref="ProducedPackages"/> as well as for its <see cref="DirectDependencies"/>.
+/// </para>
+/// <para>
+/// Beyond what its repositories produce, a profile can also describe what they consume: the
+/// <see cref="DirectDependencies"/> are the external packages they reference and the
+/// <see cref="TransitiveDependencies"/> are the closure of those. Both are optional - an empty
+/// <see cref="TransitiveDependencies"/> says nothing about the closure, not that there is none.
 /// </para>
 /// </summary>
 public sealed partial class PublishedProfile
@@ -22,7 +29,9 @@ public sealed partial class PublishedProfile
     readonly WorldName _world;
     readonly SVersion _version;
     readonly ImmutableArray<Repository> _repositories;
-    readonly Dictionary<string, PackageInstance> _packages;
+    readonly Dictionary<string, PackageInstance> _producedPackages;
+    readonly ImmutableArray<PackageInstance> _directDependencies;
+    readonly TransitiveDependencies _transitiveDependencies;
     readonly bool _isDeprecated;
     string? _toString;
 
@@ -31,6 +40,8 @@ public sealed partial class PublishedProfile
     /// <para>
     /// The <paramref name="repositories"/> are sorted by their <see cref="RepositoryKey.Url"/>: a profile
     /// is always in a canonical form, whatever the order in which its repositories have been discovered.
+    /// The <paramref name="directDependencies"/> are sorted the same way, by
+    /// <see cref="PackageInstance.PackageId"/>.
     /// </para>
     /// </summary>
     /// <param name="stackUrl">The stack repository url. Must be absolute.</param>
@@ -40,11 +51,26 @@ public sealed partial class PublishedProfile
     /// The repositories. Must not be default, must not contain the same <see cref="RepositoryKey.Url"/>
     /// or <see cref="RepositoryKey.Id"/> twice and no package identifier can appear in more than one of them.
     /// </param>
+    /// <param name="directDependencies">
+    /// The packages consumed by at least one repository, minus the produced ones. Must not contain the same
+    /// <see cref="PackageInstance.PackageId"/> twice nor any identifier of <see cref="ProducedPackages"/>.
+    /// Defaults to empty.
+    /// </param>
+    /// <param name="transitiveDependencies">
+    /// The closure of the <paramref name="directDependencies"/>. Its
+    /// <see cref="TransitiveDependencies.Regular"/> must share no identifier with the
+    /// <paramref name="directDependencies"/> nor with <see cref="ProducedPackages"/>, and each of its
+    /// <see cref="TransitiveDependencies.Ambiguous"/> must agree with its own
+    /// <see cref="AmbiguousDependency.ResolvedFrom"/>. Defaults to
+    /// <see cref="Abstractions.TransitiveDependencies.Empty"/>.
+    /// </param>
     /// <param name="isDeprecated">Whether this profile is deprecated.</param>
     public PublishedProfile( Uri stackUrl,
                              WorldName world,
                              SVersion version,
                              ImmutableArray<Repository> repositories,
+                             ImmutableArray<PackageInstance> directDependencies = default,
+                             TransitiveDependencies? transitiveDependencies = null,
                              bool isDeprecated = false )
     {
         ArgumentNullException.ThrowIfNull( stackUrl );
@@ -68,21 +94,27 @@ public sealed partial class PublishedProfile
                                                                         ? 1
                                                                         : string.CompareOrdinal( r1.Key.Url.AbsoluteUri,
                                                                                                  r2.Key.Url.AbsoluteUri ) );
-        _packages = CreatePackageIndex( _repositories );
+        _producedPackages = CreatePackageIndex( _repositories );
+        _directDependencies = CreateDirectDependencies( directDependencies, _producedPackages, out var directIndex );
+        _transitiveDependencies = transitiveDependencies ?? TransitiveDependencies.Empty;
+        CheckTransitiveDependencies( _transitiveDependencies, directIndex, _producedPackages );
         _stackUrl = stackUrl;
         _world = world;
         _version = version;
         _isDeprecated = isDeprecated;
     }
 
-    // Copy constructor used by the updaters: the repositories and the package index are shared.
+    // Copy constructor used by the updaters: the repositories, the package index and the dependencies
+    // are shared.
     PublishedProfile( PublishedProfile o, bool isDeprecated )
     {
         _stackUrl = o._stackUrl;
         _world = o._world;
         _version = o._version;
         _repositories = o._repositories;
-        _packages = o._packages;
+        _producedPackages = o._producedPackages;
+        _directDependencies = o._directDependencies;
+        _transitiveDependencies = o._transitiveDependencies;
         _isDeprecated = isDeprecated;
         _toString = o._toString;
     }
@@ -125,6 +157,113 @@ public sealed partial class PublishedProfile
         return packages;
     }
 
+    // Sorts the direct dependencies, checks their coherency and indexes them: a direct dependency is
+    // consumed by at least one repository and produced by none of them.
+    static ImmutableArray<PackageInstance> CreateDirectDependencies( ImmutableArray<PackageInstance> directDependencies,
+                                                                     Dictionary<string, PackageInstance> produced,
+                                                                     out Dictionary<string, PackageInstance> index )
+    {
+        index = new Dictionary<string, PackageInstance>( StringComparer.OrdinalIgnoreCase );
+        // A default array is an empty one: a profile written before the dependencies existed carries none.
+        if( directDependencies.IsDefault ) return [];
+        // PackageInstance's comparison is by PackageId (case insensitive) then by Version: a duplicate
+        // identifier can only be adjacent in the sorted array.
+        directDependencies = directDependencies.Sort();
+        for( int i = 0; i < directDependencies.Length; ++i )
+        {
+            var p = directDependencies[i];
+            if( p is null )
+            {
+                throw new ArgumentException( $"Null direct dependency at index {i}.", nameof( directDependencies ) );
+            }
+            if( i > 0 && StringComparer.OrdinalIgnoreCase.Equals( directDependencies[i - 1].PackageId, p.PackageId ) )
+            {
+                throw new ArgumentException( $"Direct dependency '{p.PackageId}' appears more than once in the "
+                                             + $"profile: '{directDependencies[i - 1].Version}' and '{p.Version}'.",
+                                             nameof( directDependencies ) );
+            }
+            if( produced.TryGetValue( p.PackageId, out var producedPackage ) )
+            {
+                throw new ArgumentException( $"Direct dependency '{p}' is produced by this profile "
+                                             + $"('{producedPackage}'): the direct dependencies are the consumed "
+                                             + "packages minus the produced ones.",
+                                             nameof( directDependencies ) );
+            }
+            index.Add( p.PackageId, p );
+        }
+        return directDependencies;
+    }
+
+    // Checks the closure against the two anchors it can name.
+    static void CheckTransitiveDependencies( TransitiveDependencies transitiveDependencies,
+                                             Dictionary<string, PackageInstance> direct,
+                                             Dictionary<string, PackageInstance> produced )
+    {
+        foreach( var p in transitiveDependencies.Regular )
+        {
+            if( produced.TryGetValue( p.PackageId, out var anchor ) )
+            {
+                throw new ArgumentException( $"Regular transitive dependency '{p}' is produced by this profile "
+                                             + $"('{anchor}'): a produced identifier can only appear in the closure "
+                                             + "as an ambiguity anchored on ProducedPackages.",
+                                             nameof( transitiveDependencies ) );
+            }
+            if( direct.TryGetValue( p.PackageId, out anchor ) )
+            {
+                throw new ArgumentException( $"Regular transitive dependency '{p}' is a direct dependency "
+                                             + $"('{anchor}'): a direct identifier can only appear in the closure "
+                                             + "as an ambiguity anchored on DirectDependencies.",
+                                             nameof( transitiveDependencies ) );
+            }
+        }
+        foreach( var a in transitiveDependencies.Ambiguous )
+        {
+            switch( a.ResolvedFrom )
+            {
+                case VersionSource.DirectDependencies:
+                    CheckAnchor( a, direct, "DirectDependencies" );
+                    break;
+                case VersionSource.ProducedPackages:
+                    CheckAnchor( a, produced, "ProducedPackages" );
+                    break;
+                default:
+                    CheckNoAnchor( a, direct, "a direct dependency", "DirectDependencies" );
+                    CheckNoAnchor( a, produced, "produced by this profile", "ProducedPackages" );
+                    break;
+            }
+        }
+
+        // These two are not static: they close over the constructor's parameter name.
+        void CheckAnchor( AmbiguousDependency a, Dictionary<string, PackageInstance> anchors, string source )
+        {
+            if( !anchors.TryGetValue( a.PackageId, out var anchor ) )
+            {
+                throw new ArgumentException( $"Ambiguous dependency '{a}' is resolved from {source} but no entry of "
+                                             + $"{source} has this identifier.",
+                                             nameof( transitiveDependencies ) );
+            }
+            if( anchor.Version != a.Version )
+            {
+                throw new ArgumentException( $"Ambiguous dependency '{a}' is resolved from {source} but the entry "
+                                             + $"of {source} is '{anchor}'.",
+                                             nameof( transitiveDependencies ) );
+            }
+        }
+
+        void CheckNoAnchor( AmbiguousDependency a,
+                            Dictionary<string, PackageInstance> anchors,
+                            string what,
+                            string source )
+        {
+            if( anchors.TryGetValue( a.PackageId, out var anchor ) )
+            {
+                throw new ArgumentException( $"Ambiguous dependency '{a}' is resolved from its own requirements but "
+                                             + $"'{anchor}' is {what}: it must be resolved from {source}.",
+                                             nameof( transitiveDependencies ) );
+            }
+        }
+    }
+
     /// <summary>
     /// Gets the url of the stack repository (ends with "-Stack").
     /// </summary>
@@ -152,10 +291,24 @@ public sealed partial class PublishedProfile
     public ImmutableArray<Repository> Repositories => _repositories;
 
     /// <summary>
-    /// Gets all the packages indexed by their <see cref="PackageInstance.PackageId"/>
-    /// (case insensitive).
+    /// Gets all the packages produced by the <see cref="Repositories"/> indexed by their
+    /// <see cref="PackageInstance.PackageId"/> (case insensitive).
     /// </summary>
-    public IReadOnlyDictionary<string, PackageInstance> Packages => _packages;
+    public IReadOnlyDictionary<string, PackageInstance> ProducedPackages => _producedPackages;
+
+    /// <summary>
+    /// Gets the packages consumed by at least one <see cref="Repositories"/> that none of them produces,
+    /// ordered by <see cref="PackageInstance.PackageId"/> (case insensitive). Empty when this profile
+    /// carries no dependency information.
+    /// </summary>
+    public ImmutableArray<PackageInstance> DirectDependencies => _directDependencies;
+
+    /// <summary>
+    /// Gets the closure of the <see cref="DirectDependencies"/>' own dependencies. Never null: it is
+    /// <see cref="Abstractions.TransitiveDependencies.Empty"/> when this profile carries no dependency
+    /// information.
+    /// </summary>
+    public TransitiveDependencies TransitiveDependencies => _transitiveDependencies;
 
     /// <summary>
     /// Updater that transitions <see cref="IsDeprecated"/> to true.
@@ -166,7 +319,7 @@ public sealed partial class PublishedProfile
                                                 : new PublishedProfile( this, true );
 
     /// <summary>
-    /// Updater that <see cref="Deprecate()"/> this profile if the package appears in <see cref="Packages"/>.
+    /// Updater that <see cref="Deprecate()"/> this profile if the package appears in <see cref="ProducedPackages"/>.
     /// </summary>
     /// <param name="packageId">The deprecated package identifier.</param>
     /// <param name="version">The deprecated package version.</param>
@@ -175,7 +328,7 @@ public sealed partial class PublishedProfile
     {
         ArgumentException.ThrowIfNullOrWhiteSpace( packageId );
         ArgumentNullException.ThrowIfNull( version );
-        return _isDeprecated || !_packages.TryGetValue( packageId, out var p ) || p.Version != version
+        return _isDeprecated || !_producedPackages.TryGetValue( packageId, out var p ) || p.Version != version
                 ? this
                 : Deprecate();
     }

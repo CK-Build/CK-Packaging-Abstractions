@@ -1,5 +1,6 @@
 using CK.Core;
 using System;
+using System.Collections.Immutable;
 using System.Text.Json;
 
 namespace CK.Packaging.Abstractions;
@@ -137,6 +138,67 @@ static class JsonHelper
         return SVersion.TryParse( s, out var v, mustBeCSVersion: true )
                 ? v
                 : throw new JsonException( $"Expected a Conformant SVersion for '{propertyName}', got '{s}'." );
+    }
+
+    /// <summary>
+    /// Gets a SemVer version. Unlike <see cref="GetVersion"/>, no CSemVer conformance is required: an
+    /// external package's version is any SemVer.
+    /// </summary>
+    /// <param name="r">The reader.</param>
+    /// <param name="propertyName">The property name (used by the error message).</param>
+    /// <returns>The version.</returns>
+    internal static SVersion GetPackageVersion( ref Utf8JsonReader r, string propertyName )
+    {
+        var s = GetString( ref r, propertyName );
+        return SVersion.TryParse( s, out var v )
+                ? v
+                : throw new JsonException( $"Expected a SemVer version for '{propertyName}', got '{s}'." );
+    }
+
+    /// <summary>
+    /// Gets a <see cref="VersionSource"/> from its name.
+    /// </summary>
+    /// <param name="r">The reader.</param>
+    /// <param name="propertyName">The property name (used by the error message).</param>
+    /// <returns>The version source.</returns>
+    internal static VersionSource GetVersionSource( ref Utf8JsonReader r, string propertyName )
+    {
+        var s = GetString( ref r, propertyName );
+        // The names are matched exactly: Enum.TryParse would also accept a numerical value and any
+        // casing, and this is a stored format.
+        return s switch
+        {
+            nameof( VersionSource.TransitiveDependencies ) => VersionSource.TransitiveDependencies,
+            nameof( VersionSource.DirectDependencies ) => VersionSource.DirectDependencies,
+            nameof( VersionSource.ProducedPackages ) => VersionSource.ProducedPackages,
+            _ => throw new JsonException( $"Expected \"{nameof( VersionSource.TransitiveDependencies )}\", "
+                                          + $"\"{nameof( VersionSource.DirectDependencies )}\" or "
+                                          + $"\"{nameof( VersionSource.ProducedPackages )}\" for "
+                                          + $"'{propertyName}', got '{s}'." )
+        };
+    }
+
+    /// <summary>
+    /// Reads an array of "packageId@version" strings.
+    /// <para>
+    /// The <paramref name="r"/> must be on the <see cref="JsonTokenType.StartArray"/> token and is left
+    /// on the <see cref="JsonTokenType.EndArray"/> one.
+    /// </para>
+    /// </summary>
+    /// <param name="r">The reader.</param>
+    /// <param name="propertyName">The property name (used by the error message).</param>
+    /// <returns>The package instances.</returns>
+    internal static ImmutableArray<PackageInstance>.Builder ReadPackageInstances( ref Utf8JsonReader r,
+                                                                                  string propertyName )
+    {
+        EnsureStartArray( ref r, propertyName );
+        var packages = ImmutableArray.CreateBuilder<PackageInstance>();
+        while( r.Read() && r.TokenType != JsonTokenType.EndArray )
+        {
+            packages.Add( GetPackageInstance( ref r, propertyName ) );
+        }
+        EnsureEndArray( ref r, propertyName );
+        return packages;
     }
 
     /// <summary>

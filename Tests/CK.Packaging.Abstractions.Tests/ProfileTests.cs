@@ -22,11 +22,11 @@ public class ProfileTests
         p.IsDeprecated.ShouldBeFalse();
         p.ToString().ShouldBe( "CKt/v1.2.3" );
 
-        p.Packages.Count.ShouldBe( 3 );
-        p.Packages["CK.One"].Version.ShouldBe( TestModel.V( "1.2.3" ) );
+        p.ProducedPackages.Count.ShouldBe( 3 );
+        p.ProducedPackages["CK.One"].Version.ShouldBe( TestModel.V( "1.2.3" ) );
         // PackageId is case insensitive.
-        p.Packages["ck.two"].ShouldBe( TestModel.Package( "CK.Two@1.2.3" ) );
-        p.Packages.ContainsKey( "CK.Unknown" ).ShouldBeFalse();
+        p.ProducedPackages["ck.two"].ShouldBe( TestModel.Package( "CK.Two@1.2.3" ) );
+        p.ProducedPackages.ContainsKey( "CK.Unknown" ).ShouldBeFalse();
     }
 
     [Test]
@@ -137,7 +137,9 @@ public class ProfileTests
         d.World.ShouldBe( p.World );
         d.StackUrl.ShouldBe( p.StackUrl );
         d.Repositories.ShouldBe( p.Repositories );
-        d.Packages.ShouldBeSameAs( p.Packages );
+        d.ProducedPackages.ShouldBeSameAs( p.ProducedPackages );
+        d.DirectDependencies.ShouldBe( p.DirectDependencies );
+        d.TransitiveDependencies.ShouldBeSameAs( p.TransitiveDependencies );
 
         d.Deprecate().ShouldBeSameAs( d );
     }
@@ -149,6 +151,8 @@ public class ProfileTests
 
         p.OnDeprecatedPackage( "CK.Unknown", TestModel.V( "1.2.3" ) ).ShouldBeSameAs( p );
         p.OnDeprecatedPackage( "CK.Two", TestModel.V( "1.2.4" ) ).ShouldBeSameAs( p, "Not the published version." );
+        p.OnDeprecatedPackage( "NUnit", TestModel.V( "4.2.2" ) )
+         .ShouldBeSameAs( p, "A direct dependency is not a produced package." );
 
         var d = p.OnDeprecatedPackage( "ck.TWO", TestModel.V( "1.2.3" ) );
         d.ShouldNotBeSameAs( p );
@@ -158,13 +162,353 @@ public class ProfileTests
          .ShouldBeSameAs( d, "Already deprecated." );
     }
 
+    #region DirectDependencies and TransitiveDependencies
+
+    [Test]
+    public void a_profile_carries_no_dependency_by_default()
+    {
+        var p = TestModel.Profile( "1.0.0", TestModel.Repo( "One", 1, "CK.One@1.0.0" ) );
+
+        p.DirectDependencies.ShouldBeEmpty();
+        p.TransitiveDependencies.ShouldBeSameAs( TransitiveDependencies.Empty );
+        p.TransitiveDependencies.IsEmpty.ShouldBeTrue();
+        p.TransitiveDependencies.IsComplete.ShouldBeTrue( "Nothing is missing when nothing is known." );
+    }
+
+    [Test]
+    public void dependencies_are_sorted_and_the_ambiguities_carry_their_anchor()
+    {
+        // SampleDirectDependencies declares "System.Text.Json" before "NUnit".
+        var p = TestModel.SampleProfile();
+
+        p.DirectDependencies.Select( x => x.ToString() )
+                            .ShouldBe( new[] { "NUnit@4.2.2", "System.Text.Json@9.0.0" } );
+
+        var t = p.TransitiveDependencies;
+        t.Regular.Select( x => x.ToString() ).ShouldBe( new[] { "System.IO.Pipelines@9.0.0" } );
+        t.Missing.Select( x => x.ToString() ).ShouldBe( new[] { "Ghost.Package@0.1.0" } );
+        t.IsComplete.ShouldBeFalse();
+        t.IsEmpty.ShouldBeFalse();
+        t.ToString().ShouldBe( "1 regular, 3 ambiguous, 1 missing" );
+
+        // Ambiguities are sorted by package identifier, whatever their anchor.
+        t.Ambiguous.Select( x => $"{x} ({x.ResolvedFrom})" )
+                   .ShouldBe( new[] { "CK.Two@1.2.3 (ProducedPackages)",
+                                      "System.Text.Encodings.Web@9.0.0 (TransitiveDependencies)",
+                                      "System.Text.Json@9.0.0 (DirectDependencies)" } );
+
+        // The anchors are the profile's own entries.
+        p.ProducedPackages["CK.Two"].Version.ShouldBe( t.Ambiguous[0].Version );
+        p.DirectDependencies.ShouldContain( x => x.Equals( t.Ambiguous[2] ) );
+    }
+
+    [Test]
+    public void requirements_are_sorted_by_descending_version_and_their_content_is_canonical()
+    {
+        var a = TestModel.SampleProfile().TransitiveDependencies.Ambiguous[1];
+
+        a.PackageId.ShouldBe( "System.Text.Encodings.Web" );
+        a.ResolvedFrom.ShouldBe( VersionSource.TransitiveDependencies );
+        // SampleTransitiveDependencies declares 8.0.0 before 9.0.0.
+        a.Requirements.Select( r => r.Version.ToString() ).ShouldBe( new[] { "9.0.0", "8.0.0" } );
+        a.Version.ShouldBe( a.Requirements[0].Version, "Highest-wins." );
+        // ...and "Foo.Legacy" before "Bar".
+        a.Requirements[1].RequiredBy.Select( x => x.ToString() )
+                                    .ShouldBe( new[] { "Bar@3.0.0", "Foo.Legacy@1.2.0" } );
+        a.Requirements[1].TargetFrameworks.ShouldBe( new[] { ".NETStandard2.0" } );
+    }
+
+    [Test]
+    public void a_direct_dependency_identifier_cannot_appear_twice()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  TestModel.Packages( "CK.Ext@1.0.0", "ck.EXT@2.0.0" ),
+                                                                  null ) )
+              .Message.ShouldStartWith( "Direct dependency 'ck.EXT' appears more than once in the profile: "
+                                        + "'1.0.0' and '2.0.0'." );
+    }
+
+    [Test]
+    public void a_direct_dependency_cannot_be_produced_by_the_profile()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  TestModel.Packages( "CK.One@0.9.0" ),
+                                                                  null,
+                                                                  TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Direct dependency 'CK.One@0.9.0' is produced by this profile "
+                                        + "('CK.One@1.0.0'): the direct dependencies are the consumed packages "
+                                        + "minus the produced ones." );
+    }
+
+    [Test]
+    public void a_regular_transitive_dependency_cannot_be_produced_nor_direct()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  [],
+                                                                  new TransitiveDependencies( TestModel.Packages( "CK.One@0.9.0" ), [], [] ),
+                                                                  TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Regular transitive dependency 'CK.One@0.9.0' is produced by this profile "
+                                        + "('CK.One@1.0.0'): a produced identifier can only appear in the closure "
+                                        + "as an ambiguity anchored on ProducedPackages." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  TestModel.Packages( "NUnit@4.2.2" ),
+                                                                  new TransitiveDependencies( TestModel.Packages( "nunit@4.0.0" ), [], [] ) ) )
+              .Message.ShouldStartWith( "Regular transitive dependency 'nunit@4.0.0' is a direct dependency "
+                                        + "('NUnit@4.2.2'): a direct identifier can only appear in the closure "
+                                        + "as an ambiguity anchored on DirectDependencies." );
+    }
+
+    [Test]
+    public void a_transitive_dependency_cannot_be_both_regular_and_ambiguous()
+    {
+        var a = TestModel.Ambiguous( "A@2.0.0",
+                                     VersionSource.TransitiveDependencies,
+                                     TestModel.Req( "2.0.0", "net10.0", "P@1.0.0" ),
+                                     TestModel.Req( "1.0.0", "net10.0", "Q@1.0.0" ) );
+
+        Should.Throw<ArgumentException>( () => new TransitiveDependencies( TestModel.Packages( "a@2.0.0" ),
+                                                                           [a],
+                                                                           [] ) )
+              .Message.ShouldStartWith( "Transitive dependency 'A' is both regular and ambiguous: one identifier "
+                                        + "resolves to one version, ambiguous or not." );
+    }
+
+    [Test]
+    public void a_transitive_dependency_identifier_appears_once_in_each_list()
+    {
+        Should.Throw<ArgumentException>( () => new TransitiveDependencies( TestModel.Packages( "A@1.0.0", "a@2.0.0" ),
+                                                                           [],
+                                                                           [] ) )
+              .Message.ShouldStartWith( "Regular transitive dependency 'a' appears more than once: "
+                                        + "'1.0.0' and '2.0.0'." );
+
+        Should.Throw<ArgumentException>( () => new TransitiveDependencies( [],
+                                                                           [],
+                                                                           TestModel.Packages( "G@1.0.0", "g@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Missing dependency 'g@1.0.0' appears more than once." );
+    }
+
+    [Test]
+    public void the_three_lists_must_be_initialized()
+    {
+        Should.Throw<ArgumentException>( () => new TransitiveDependencies( default, [], [] ) )
+              .Message.ShouldStartWith( "Must be initialized." );
+        Should.Throw<ArgumentException>( () => new TransitiveDependencies( [], default, [] ) )
+              .Message.ShouldStartWith( "Must be initialized." );
+        Should.Throw<ArgumentException>( () => new TransitiveDependencies( [], [], default ) )
+              .Message.ShouldStartWith( "Must be initialized." );
+    }
+
+    [Test]
+    public void an_ambiguity_anchored_on_DirectDependencies_must_match_its_direct_dependency()
+    {
+        var a = TestModel.Ambiguous( "NUnit@4.0.0",
+                                     VersionSource.DirectDependencies,
+                                     TestModel.Req( "5.0.0", "net10.0", "P@1.0.0" ) );
+
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  [],
+                                                                  new TransitiveDependencies( [], [a], [] ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'NUnit@4.0.0' is resolved from DirectDependencies but "
+                                        + "no entry of DirectDependencies has this identifier." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  TestModel.Packages( "NUnit@4.2.2" ),
+                                                                  new TransitiveDependencies( [], [a], [] ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'NUnit@4.0.0' is resolved from DirectDependencies but "
+                                        + "the entry of DirectDependencies is 'NUnit@4.2.2'." );
+    }
+
+    [Test]
+    public void an_ambiguity_anchored_on_ProducedPackages_must_match_its_produced_package()
+    {
+        var a = TestModel.Ambiguous( "CK.One@0.9.0",
+                                     VersionSource.ProducedPackages,
+                                     TestModel.Req( "5.0.0", "net10.0", "P@1.0.0" ) );
+
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  [],
+                                                                  new TransitiveDependencies( [], [a], [] ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'CK.One@0.9.0' is resolved from ProducedPackages but "
+                                        + "no entry of ProducedPackages has this identifier." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  [],
+                                                                  new TransitiveDependencies( [], [a], [] ),
+                                                                  TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'CK.One@0.9.0' is resolved from ProducedPackages but "
+                                        + "the entry of ProducedPackages is 'CK.One@1.0.0'." );
+    }
+
+    [Test]
+    public void an_ambiguity_resolved_from_its_own_requirements_must_have_no_anchor()
+    {
+        var a = TestModel.Ambiguous( "CK.One@2.0.0",
+                                     VersionSource.TransitiveDependencies,
+                                     TestModel.Req( "2.0.0", "net10.0", "P@1.0.0" ),
+                                     TestModel.Req( "1.0.0", "net10.0", "Q@1.0.0" ) );
+
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+                                                                  TestModel.Packages( "CK.One@2.0.0" ),
+                                                                  new TransitiveDependencies( [], [a], [] ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'CK.One@2.0.0' is resolved from its own requirements "
+                                        + "but 'CK.One@2.0.0' is a direct dependency: it must be resolved from "
+                                        + "DirectDependencies." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Profile( "2.0.0",
+                                                                  [],
+                                                                  new TransitiveDependencies( [], [a], [] ),
+                                                                  TestModel.Repo( "One", 1, "CK.One@2.0.0" ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'CK.One@2.0.0' is resolved from its own requirements "
+                                        + "but 'CK.One@2.0.0' is produced by this profile: it must be resolved "
+                                        + "from ProducedPackages." );
+    }
+
+    [Test]
+    public void an_ambiguity_has_at_least_one_requirement()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@1.0.0", VersionSource.DirectDependencies ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'A@1.0.0' has no requirement: an ambiguity is a "
+                                        + "disagreement, so at least one is required." );
+
+        Should.Throw<ArgumentException>( () => new AmbiguousDependency( "A",
+                                                                        TestModel.V( "1.0.0" ),
+                                                                        VersionSource.DirectDependencies,
+                                                                        default ) )
+              .Message.ShouldStartWith( "Requirements must be initialized." );
+    }
+
+    [Test]
+    public void an_ambiguity_resolved_from_its_own_requirements_takes_the_greatest_of_them()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@1.0.0",
+                                                                    VersionSource.TransitiveDependencies,
+                                                                    TestModel.Req( "1.0.0", "net10.0", "P@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'A@1.0.0' is resolved from its own requirements but "
+                                        + "has only one ('1.0.0'): it is a regular transitive dependency." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@1.0.0",
+                                                                    VersionSource.TransitiveDependencies,
+                                                                    TestModel.Req( "1.0.0", "net10.0", "P@1.0.0" ),
+                                                                    TestModel.Req( "2.0.0", "net10.0", "Q@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'A@1.0.0' is resolved from its own requirements: its "
+                                        + "version must be the greatest of them, which is '2.0.0'." );
+    }
+
+    [TestCase( VersionSource.DirectDependencies )]
+    [TestCase( VersionSource.ProducedPackages )]
+    public void an_anchored_ambiguity_only_reports_the_greater_requirements( VersionSource resolvedFrom )
+    {
+        // A requirement equal to the anchor is not a disagreement, and a smaller one is invisible
+        // to a restore: only the harmful direction is reported.
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@2.0.0",
+                                                                    resolvedFrom,
+                                                                    TestModel.Req( "3.0.0", "net10.0", "P@1.0.0" ),
+                                                                    TestModel.Req( "2.0.0", "net10.0", "Q@1.0.0" ) ) )
+              .Message.ShouldStartWith( $"Ambiguous dependency 'A@2.0.0' is anchored on {resolvedFrom}: its "
+                                        + "requirements must all be greater than '2.0.0', but '2.0.0' is not." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@2.0.0",
+                                                                    resolvedFrom,
+                                                                    TestModel.Req( "1.0.0", "net10.0", "P@1.0.0" ) ) )
+              .Message.ShouldStartWith( $"Ambiguous dependency 'A@2.0.0' is anchored on {resolvedFrom}: its "
+                                        + "requirements must all be greater than '2.0.0', but '1.0.0' is not." );
+    }
+
+    [Test]
+    public void a_requirement_comes_from_at_least_one_package()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@1.0.0",
+                                                                    VersionSource.DirectDependencies,
+                                                                    TestModel.Req( "2.0.0", "net10.0" ) ) )
+              .Message.ShouldStartWith( "Requirement 'A@2.0.0' has no RequiredBy: a requirement comes from at "
+                                        + "least one package." );
+    }
+
+    [Test]
+    public void a_version_cannot_be_required_twice_and_neither_can_a_requester_nor_a_framework()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@1.0.0",
+                                                                    VersionSource.DirectDependencies,
+                                                                    TestModel.Req( "2.0.0", "net10.0", "P@1.0.0" ),
+                                                                    TestModel.Req( "2.0.0", "net8.0", "Q@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Ambiguous dependency 'A' requires '2.0.0' more than once: such "
+                                        + "requirements must be merged." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@1.0.0",
+                                                                    VersionSource.DirectDependencies,
+                                                                    TestModel.Req( "2.0.0", "net10.0", "P@1.0.0", "P@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Requirement 'A@2.0.0' is required by 'P@1.0.0' more than once." );
+
+        Should.Throw<ArgumentException>( () => TestModel.Ambiguous( "A@1.0.0",
+                                                                    VersionSource.DirectDependencies,
+                                                                    TestModel.Req( "2.0.0", "net10.0,net10.0", "P@1.0.0" ) ) )
+              .Message.ShouldStartWith( "Requirement 'A@2.0.0' carries the target framework 'net10.0' more "
+                                        + "than once." );
+    }
+
+    [Test]
+    public void a_dependency_version_is_any_SemVer()
+    {
+        // An external package is not bound to CSemVer, unlike the profile's own version.
+        var p = TestModel.Profile( "1.0.0",
+                                   TestModel.Packages( "Some.Lib@1.0.0-beta2" ),
+                                   new TransitiveDependencies( TestModel.Packages( "Other.Lib@2.0.0-rc.2.23479.6" ),
+                                                               [],
+                                                               [] ) );
+
+        var back = PublishedProfile.Parse( p.ToUtf8Bytes() );
+        back.DirectDependencies[0].Version.ToString().ShouldBe( "1.0.0-beta2" );
+        back.TransitiveDependencies.Regular[0].Version.ToString().ShouldBe( "2.0.0-rc.2.23479.6" );
+    }
+
+    [Test]
+    public void absent_dependency_properties_are_empty()
+    {
+        // A profile written before the dependencies existed still parses: there is no file format
+        // version, and IsComplete covers the only case a consumer must distinguish.
+        var json = """
+            {
+                "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
+                "World": "CKt",
+                "Version": "1.2.3",
+                "Repositories": []
+            }
+            """;
+        var p = PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) );
+
+        p.DirectDependencies.ShouldBeEmpty();
+        p.TransitiveDependencies.ShouldBeSameAs( TransitiveDependencies.Empty );
+
+        // Same for the 3 lists of an existing TransitiveDependencies object.
+        var partial = """
+            {
+                "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
+                "World": "CKt",
+                "Version": "1.2.3",
+                "Repositories": [],
+                "DirectDependencies": [],
+                "TransitiveDependencies": { "Missing": [ "Ghost.Package@0.1.0" ] }
+            }
+            """;
+        var t = PublishedProfile.Parse( Encoding.UTF8.GetBytes( partial ) ).TransitiveDependencies;
+
+        t.Regular.ShouldBeEmpty();
+        t.Ambiguous.ShouldBeEmpty();
+        t.Missing.Select( x => x.ToString() ).ShouldBe( new[] { "Ghost.Package@0.1.0" } );
+        t.IsComplete.ShouldBeFalse();
+    }
+
+    #endregion
+
     [Test]
     public void profile_compact_json_is_canonical()
     {
         var p = TestModel.SampleProfile();
 
         p.ToJsonString( indented: false ).ShouldBe( """
-            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"1.2.3","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}]}
+            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"1.2.3","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}],"DirectDependencies":["NUnit@4.2.2","System.Text.Json@9.0.0"],"TransitiveDependencies":{"Regular":["System.IO.Pipelines@9.0.0"],"Ambiguous":[{"Package":"CK.Two@1.2.3","ResolvedFrom":"ProducedPackages","Requirements":[{"Version":"99.0.0","RequiredBy":["Third.Party@1.0.0"],"TargetFrameworks":["net10.0"]}]},{"Package":"System.Text.Encodings.Web@9.0.0","ResolvedFrom":"TransitiveDependencies","Requirements":[{"Version":"9.0.0","RequiredBy":["System.Text.Json@9.0.0"],"TargetFrameworks":["net8.0"]},{"Version":"8.0.0","RequiredBy":["Bar@3.0.0","Foo.Legacy@1.2.0"],"TargetFrameworks":[".NETStandard2.0"]}]},{"Package":"System.Text.Json@9.0.0","ResolvedFrom":"DirectDependencies","Requirements":[{"Version":"10.0.0","RequiredBy":["Some.Analyzer@2.1.0"],"TargetFrameworks":["net10.0"]}]}],"Missing":["Ghost.Package@0.1.0"]}}
             """ );
     }
 
@@ -190,8 +534,15 @@ public class ProfileTests
         back.ToJsonString().ShouldBe( p.ToJsonString() );
         back.Version.ShouldBe( p.Version );
         back.IsDeprecated.ShouldBeTrue();
-        back.Packages.Count.ShouldBe( 3 );
+        back.ProducedPackages.Count.ShouldBe( 3 );
         back.Repositories[0].Key.ShouldBe( p.Repositories[0].Key );
+        back.DirectDependencies.ShouldBe( p.DirectDependencies );
+        back.TransitiveDependencies.Regular.ShouldBe( p.TransitiveDependencies.Regular );
+        back.TransitiveDependencies.Missing.ShouldBe( p.TransitiveDependencies.Missing );
+        back.TransitiveDependencies.Ambiguous.Select( a => a.ResolvedFrom )
+                                             .ShouldBe( p.TransitiveDependencies.Ambiguous.Select( a => a.ResolvedFrom ) );
+        back.TransitiveDependencies.Ambiguous[1].Requirements
+            .ShouldBe( p.TransitiveDependencies.Ambiguous[1].Requirements );
 
         // The compact and the indented forms carry the same content.
         PublishedProfile.Parse( p.ToUtf8Bytes( indented: false ) ).ToJsonString().ShouldBe( p.ToJsonString() );
@@ -213,7 +564,21 @@ public class ProfileTests
                         "AlsoUnknown": [],
                         "Packages": [ "CK.One@1.2.3" ]
                     }
-                ]
+                ],
+                "TransitiveDependencies": {
+                    "Unknown": 3712,
+                    "Ambiguous": [
+                        {
+                            "Package": "A@1.0.0",
+                            "ResolvedFrom": "TransitiveDependencies",
+                            "Unknown": [],
+                            "Requirements": [
+                                { "Version": "1.0.0", "RequiredBy": [ "P@1.0.0" ], "TargetFrameworks": [], "Unknown": {} },
+                                { "Version": "0.5.0", "RequiredBy": [ "Q@1.0.0" ], "TargetFrameworks": [ "net10.0" ] }
+                            ]
+                        }
+                    ]
+                }
             }
             """;
         var p = PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) );
@@ -221,7 +586,11 @@ public class ProfileTests
         p.Version.ShouldBe( TestModel.V( "1.2.3" ) );
         // IsDeprecated defaults to false when the property is missing.
         p.IsDeprecated.ShouldBeFalse();
-        p.Packages.Keys.ShouldBe( new[] { "CK.One" } );
+        p.ProducedPackages.Keys.ShouldBe( new[] { "CK.One" } );
+        var a = p.TransitiveDependencies.Ambiguous[0];
+        a.ToString().ShouldBe( "A@1.0.0" );
+        a.Requirements.Length.ShouldBe( 2 );
+        a.Requirements[0].TargetFrameworks.ShouldBeEmpty( "An empty TargetFrameworks is allowed." );
     }
 
     [TestCase( """{"World":"CKt","Version":"1.2.3","Repositories":[]}""",
@@ -255,6 +624,32 @@ public class ProfileTests
     [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[{"Url":"https://x/z","Id":"AQAAAAAAAAA","Packages":["CK.One"]}]}""",
                "Expected a \"packageId@version\" string in 'Packages', got 'CK.One'." )]
     [TestCase( """[]""", "Expected 'PublishedProfile' object start, got 'StartArray'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"DirectDependencies":{}}""",
+               "Expected an array for 'DirectDependencies', got 'StartObject'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"DirectDependencies":["CK.One"]}""",
+               "Expected a \"packageId@version\" string in 'DirectDependencies', got 'CK.One'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":[]}""",
+               "Expected 'TransitiveDependencies' object start, got 'StartArray'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Regular":["CK.One"]}}""",
+               "Expected a \"packageId@version\" string in 'Regular', got 'CK.One'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"ResolvedFrom":"TransitiveDependencies","Requirements":[]}]}}""",
+               "Missing 'Package' property in 'AmbiguousDependency'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","Requirements":[]}]}}""",
+               "Missing 'ResolvedFrom' property in 'AmbiguousDependency'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"Nope","Requirements":[]}]}}""",
+               "Expected \"TransitiveDependencies\", \"DirectDependencies\" or \"ProducedPackages\" for 'ResolvedFrom', got 'Nope'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies"}]}}""",
+               "Missing 'Requirements' property in 'AmbiguousDependency'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Requirements":[{"RequiredBy":["P@1.0.0"],"TargetFrameworks":[]}]}]}}""",
+               "Missing 'Version' property in 'VersionRequirement'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Requirements":[{"Version":"1.0.0","TargetFrameworks":[]}]}]}}""",
+               "Missing 'RequiredBy' property in 'VersionRequirement'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Requirements":[{"Version":"1.0.0","RequiredBy":["P@1.0.0"]}]}]}}""",
+               "Missing 'TargetFrameworks' property in 'VersionRequirement'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Requirements":[{"Version":"nope","RequiredBy":["P@1.0.0"],"TargetFrameworks":[]}]}]}}""",
+               "Expected a SemVer version for 'Version', got 'nope'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Requirements":[{"Version":"1.0.0","RequiredBy":["P@1.0.0"],"TargetFrameworks":[3]}]}]}}""",
+               "Expected a string for 'TargetFrameworks', got 'Number'." )]
     public void json_errors_are_explicit( string json, string message )
     {
         Should.Throw<JsonException>( () => PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) ) )
@@ -286,6 +681,21 @@ public class ProfileTests
         Should.Throw<ArgumentException>( () => PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) ) )
               .Message.ShouldStartWith( "Package 'CK.One' appears more than once in the profile: "
                                         + "'1.2.3' and '1.2.4'." );
+
+        // The dependencies are checked the same way.
+        var withDependencies = """
+            {
+                "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
+                "World": "CKt",
+                "Version": "1.2.3",
+                "Repositories": [
+                    { "Url": "https://x/One", "Id": "AQAAAAAAAAA", "Packages": [ "CK.One@1.2.3" ] }
+                ],
+                "DirectDependencies": [ "CK.One@1.2.3" ]
+            }
+            """;
+        Should.Throw<ArgumentException>( () => PublishedProfile.Parse( Encoding.UTF8.GetBytes( withDependencies ) ) )
+              .Message.ShouldStartWith( "Direct dependency 'CK.One@1.2.3' is produced by this profile" );
     }
 
     [Test]
@@ -309,7 +719,7 @@ public class ProfileTests
         r.GetString().ShouldBe( "Profile" );
         r.Read();
         var p = PublishedProfile.Read( ref r );
-        p.Packages.Count.ShouldBe( 3 );
+        p.ProducedPackages.Count.ShouldBe( 3 );
         r.TokenType.ShouldBe( JsonTokenType.EndObject );
 
         r.Read();

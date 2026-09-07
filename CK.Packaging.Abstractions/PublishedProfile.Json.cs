@@ -49,6 +49,16 @@ public sealed partial class PublishedProfile
             r.Write( w );
         }
         w.WriteEndArray();
+        // The dependencies are always written, empty or not: the format is the same for every profile
+        // and Read accepts their absence for the profiles written before they existed.
+        w.WriteStartArray( "DirectDependencies" );
+        foreach( var p in _directDependencies )
+        {
+            w.WriteStringValue( p.ToString() );
+        }
+        w.WriteEndArray();
+        w.WritePropertyName( "TransitiveDependencies" );
+        _transitiveDependencies.Write( w );
         w.WriteEndObject();
     }
 
@@ -116,6 +126,8 @@ public sealed partial class PublishedProfile
         SVersion? version = null;
         bool isDeprecated = false;
         ImmutableArray<Repository>.Builder? repositories = null;
+        ImmutableArray<PackageInstance>.Builder? directDependencies = null;
+        TransitiveDependencies? transitiveDependencies = null;
         while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
         {
             var name = JsonHelper.StartProperty( ref r );
@@ -142,6 +154,12 @@ public sealed partial class PublishedProfile
                     }
                     JsonHelper.EnsureEndArray( ref r, name );
                     break;
+                case "DirectDependencies":
+                    directDependencies = JsonHelper.ReadPackageInstances( ref r, name );
+                    break;
+                case "TransitiveDependencies":
+                    transitiveDependencies = TransitiveDependencies.Read( ref r );
+                    break;
                 default:
                     r.Skip();
                     break;
@@ -153,6 +171,10 @@ public sealed partial class PublishedProfile
                                      JsonHelper.Required( version, "Version", nameof( PublishedProfile ) ),
                                      JsonHelper.Required( repositories, "Repositories", nameof( PublishedProfile ) )
                                                .DrainToImmutable(),
+                                     // Unlike the Repositories, the dependencies are optional: absent
+                                     // means empty, there is no file format version to distinguish them.
+                                     directDependencies?.DrainToImmutable() ?? [],
+                                     transitiveDependencies,
                                      isDeprecated );
     }
 }
