@@ -52,14 +52,13 @@ static class TestModel
     public static SVersion V( string version ) => SVersion.Parse( version, mustBeCSVersion: true );
 
     /// <summary>
-    /// Creates a <see cref="VersionRequirement"/>. The <paramref name="targetFrameworks"/> are comma
-    /// separated: the empty string is the single "any framework" entry, not an empty list.
+    /// Creates a <see cref="VersionResolution"/> from the numerical identifiers of the repositories
+    /// that resolved the <paramref name="version"/>.
     /// </summary>
-    public static VersionRequirement Req( string version, string targetFrameworks, params string[] requiredBy )
+    public static VersionResolution Res( string version, params ulong[] repositories )
     {
-        return new VersionRequirement( SVersion.Parse( version ),
-                                       Packages( requiredBy ),
-                                       [.. targetFrameworks.Split( ',' )] );
+        return new VersionResolution( SVersion.Parse( version ),
+                                      [.. repositories.Select( id => new RandomId( id ) )] );
     }
 
     /// <summary>
@@ -67,10 +66,10 @@ static class TestModel
     /// </summary>
     public static AmbiguousDependency Ambiguous( string packageInstance,
                                                  VersionSource resolvedFrom,
-                                                 params VersionRequirement[] requirements )
+                                                 params VersionResolution[] resolutions )
     {
         var p = Package( packageInstance );
-        return new AmbiguousDependency( p.PackageId, p.Version, resolvedFrom, [.. requirements] );
+        return new AmbiguousDependency( p.PackageId, p.Version, resolvedFrom, [.. resolutions] );
     }
 
     /// <summary>
@@ -104,8 +103,9 @@ static class TestModel
         => Packages( "System.Text.Json@9.0.0", "NUnit@4.2.2" );
 
     /// <summary>
-    /// The reference closure: one regular dependency, one ambiguity of each <see cref="VersionSource"/>
-    /// and one missing package. The <paramref name="version"/> is the profile's one: it is what the
+    /// The reference transitive dependencies: one regular dependency and one ambiguity of each
+    /// <see cref="VersionSource"/>. The repositories they name are the ones of <see cref="SampleProfile"/>
+    /// (1 is "One" and 2 is "Two") and the <paramref name="version"/> is the profile's one: it is what the
     /// <see cref="VersionSource.ProducedPackages"/> ambiguity is anchored on.
     /// </summary>
     public static TransitiveDependencies SampleTransitiveDependencies( string version = "1.2.3" )
@@ -113,28 +113,28 @@ static class TestModel
         return new TransitiveDependencies(
                     Packages( "System.IO.Pipelines@9.0.0" ),
                     [
-                        // Anchored on a direct dependency: an analyzer requires more than what the
-                        // repositories reference.
+                        // Anchored on a direct dependency: a repository's restore resolved more than what
+                        // the repositories reference.
                         Ambiguous( "System.Text.Json@9.0.0",
                                    VersionSource.DirectDependencies,
-                                   Req( "10.0.0", "net10.0", "Some.Analyzer@2.1.0" ) ),
-                        // Resolved from its own requirements: NuGet's highest-wins.
+                                   Res( "10.0.0", 2 ) ),
+                        // Resolved from the repositories themselves: NuGet's highest-wins. Repository 1
+                        // appears in both resolutions: two of its target frameworks resolved differently.
                         Ambiguous( "System.Text.Encodings.Web@9.0.0",
                                    VersionSource.TransitiveDependencies,
-                                   Req( "8.0.0", ".NETStandard2.0", "Foo.Legacy@1.2.0", "Bar@3.0.0" ),
-                                   Req( "9.0.0", "net8.0", "System.Text.Json@9.0.0" ) ),
-                        // Anchored on a produced package: something requires a version this world
+                                   Res( "8.0.0", 1 ),
+                                   Res( "9.0.0", 2, 1 ) ),
+                        // Anchored on a produced package: a repository resolved a version this world
                         // has not produced.
                         Ambiguous( $"CK.Two@{version}",
                                    VersionSource.ProducedPackages,
-                                   Req( "99.0.0", "net10.0", "Third.Party@1.0.0" ) )
-                    ],
-                    Packages( "Ghost.Package@0.1.0" ) );
+                                   Res( "99.0.0", 1 ) )
+                    ] );
     }
 
     /// <summary>
     /// Creates the reference profile: 2 repositories, 3 packages, 2 direct dependencies and the
-    /// <see cref="SampleTransitiveDependencies"/> closure. The repositories, the packages and the
+    /// <see cref="SampleTransitiveDependencies"/>. The repositories, the packages and the
     /// dependencies are deliberately not ordered.
     /// </summary>
     public static PublishedProfile SampleProfile( string version = "1.2.3" )

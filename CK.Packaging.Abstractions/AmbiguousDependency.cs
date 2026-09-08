@@ -7,80 +7,70 @@ using System.Text.Json;
 namespace CK.Packaging.Abstractions;
 
 /// <summary>
-/// One required version of a package identifier, the closure members that require it and the target
-/// frameworks under which they do (the union across the <see cref="RequiredBy"/>).
+/// One version of a transitive dependency and the profile repositories whose restore resolved it.
+/// <para>
+/// This is an observation, not a requirement: the transitive packages of a publication come from NuGet's
+/// own resolution ("dotnet package list --include-transitive"), which never says which package pulled an
+/// identifier in. What it does say is which repository ended up with which version, and that is what a
+/// disagreement has to name to be diagnosable.
+/// </para>
 /// </summary>
 /// <param name="Version">
-/// The required version. Any SemVer: an external package is not bound to CSemVer.
+/// The resolved version. Any SemVer: an external package is not bound to CSemVer.
 /// </param>
-/// <param name="RequiredBy">
-/// The packages that require the <see cref="Version"/>. Never empty and without duplicate.
+/// <param name="Repositories">
+/// The <see cref="RepositoryKey.Id"/> of the profile repositories that resolved the <see cref="Version"/>,
+/// in ascending order. Never empty and without duplicate.
 /// </param>
-/// <param name="TargetFrameworks">
-/// The target frameworks under which the <see cref="RequiredBy"/> require the <see cref="Version"/>,
-/// as they appear in the nuspec files (".NETStandard2.0", "net10.0", ...). The empty string stands
-/// for "any framework". Without duplicate, but can be empty.
-/// </param>
-public readonly record struct VersionRequirement( SVersion Version,
-                                                  ImmutableArray<PackageInstance> RequiredBy,
-                                                  ImmutableArray<string> TargetFrameworks )
+public readonly record struct VersionResolution( SVersion Version, ImmutableArray<RandomId> Repositories )
 {
     /// <summary>
-    /// Structural equality: the synthesized one would compare the two <see cref="ImmutableArray{T}"/>
+    /// Structural equality: the synthesized one would compare the <see cref="ImmutableArray{T}"/>
     /// by reference (that is what <c>ImmutableArray</c>'s own equality does).
     /// </summary>
-    /// <param name="other">The other requirement.</param>
-    /// <returns>True if this requirement is the same as the other one, false otherwise.</returns>
-    public bool Equals( VersionRequirement other )
+    /// <param name="other">The other resolution.</param>
+    /// <returns>True if this resolution is the same as the other one, false otherwise.</returns>
+    public bool Equals( VersionResolution other )
     {
-        return Version == other.Version
-               && SeqEqual( RequiredBy, other.RequiredBy, EqualityComparer<PackageInstance>.Default )
-               && SeqEqual( TargetFrameworks, other.TargetFrameworks, StringComparer.Ordinal );
-
-        static bool SeqEqual<T>( ImmutableArray<T> a, ImmutableArray<T> b, IEqualityComparer<T> comparer )
+        if( Version != other.Version ) return false;
+        if( Repositories.IsDefault || other.Repositories.IsDefault )
         {
-            if( a.IsDefault || b.IsDefault ) return a.IsDefault && b.IsDefault;
-            if( a.Length != b.Length ) return false;
-            for( int i = 0; i < a.Length; ++i )
-            {
-                if( !comparer.Equals( a[i], b[i] ) ) return false;
-            }
-            return true;
+            return Repositories.IsDefault && other.Repositories.IsDefault;
         }
+        if( Repositories.Length != other.Repositories.Length ) return false;
+        for( int i = 0; i < Repositories.Length; ++i )
+        {
+            if( Repositories[i] != other.Repositories[i] ) return false;
+        }
+        return true;
     }
 
     /// <summary>
-    /// Overridden to match <see cref="Equals(VersionRequirement)"/>.
+    /// Overridden to match <see cref="Equals(VersionResolution)"/>.
     /// </summary>
     /// <returns>The hash.</returns>
     public override int GetHashCode()
     {
         var h = new HashCode();
         h.Add( Version );
-        if( !RequiredBy.IsDefault )
+        if( !Repositories.IsDefault )
         {
-            foreach( var p in RequiredBy ) h.Add( p );
-        }
-        if( !TargetFrameworks.IsDefault )
-        {
-            foreach( var f in TargetFrameworks ) h.Add( f, StringComparer.Ordinal );
+            foreach( var id in Repositories ) h.Add( id );
         }
         return h.ToHashCode();
     }
 
     /// <summary>
-    /// Overridden to return the version, its requesters and their frameworks.
+    /// Overridden to return the version and the repositories that resolved it.
     /// </summary>
     /// <returns>A readable string.</returns>
     public override string ToString()
     {
-        return $"{Version} required by [{Join( RequiredBy )}] for [{Join( TargetFrameworks )}]";
-
-        static string Join<T>( ImmutableArray<T> a ) => a.IsDefaultOrEmpty ? "" : string.Join( ", ", a );
+        return $"{Version} resolved by [{(Repositories.IsDefaultOrEmpty ? "" : string.Join( ", ", Repositories ))}]";
     }
 
     /// <summary>
-    /// Writes this requirement as a Json object.
+    /// Writes this resolution as a Json object.
     /// </summary>
     /// <param name="w">The writer.</param>
     public void Write( Utf8JsonWriter w )
@@ -88,23 +78,17 @@ public readonly record struct VersionRequirement( SVersion Version,
         ArgumentNullException.ThrowIfNull( w );
         w.WriteStartObject();
         w.WriteString( "Version", Version.ToString() );
-        w.WriteStartArray( "RequiredBy" );
-        foreach( var p in RequiredBy )
+        w.WriteStartArray( "Repositories" );
+        foreach( var id in Repositories )
         {
-            w.WriteStringValue( p.ToString() );
-        }
-        w.WriteEndArray();
-        w.WriteStartArray( "TargetFrameworks" );
-        foreach( var f in TargetFrameworks )
-        {
-            w.WriteStringValue( f );
+            w.WriteStringValue( id.ToString() );
         }
         w.WriteEndArray();
         w.WriteEndObject();
     }
 
     /// <summary>
-    /// Reads a requirement written by <see cref="Write(Utf8JsonWriter)"/>.
+    /// Reads a resolution written by <see cref="Write(Utf8JsonWriter)"/>.
     /// <para>
     /// The <paramref name="r"/> must be on the <see cref="JsonTokenType.StartObject"/> token (or not
     /// started yet) and is left on the <see cref="JsonTokenType.EndObject"/> token. Unknown properties
@@ -112,13 +96,12 @@ public readonly record struct VersionRequirement( SVersion Version,
     /// </para>
     /// </summary>
     /// <param name="r">The reader.</param>
-    /// <returns>The requirement.</returns>
-    public static VersionRequirement Read( ref Utf8JsonReader r )
+    /// <returns>The resolution.</returns>
+    public static VersionResolution Read( ref Utf8JsonReader r )
     {
-        JsonHelper.EnsureStartObject( ref r, nameof( VersionRequirement ) );
+        JsonHelper.EnsureStartObject( ref r, nameof( VersionResolution ) );
         SVersion? version = null;
-        ImmutableArray<PackageInstance>.Builder? requiredBy = null;
-        ImmutableArray<string>.Builder? targetFrameworks = null;
+        ImmutableArray<RandomId>.Builder? repositories = null;
         while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
         {
             var name = JsonHelper.StartProperty( ref r );
@@ -127,76 +110,65 @@ public readonly record struct VersionRequirement( SVersion Version,
                 case "Version":
                     version = JsonHelper.GetPackageVersion( ref r, name );
                     break;
-                case "RequiredBy":
-                    requiredBy = JsonHelper.ReadPackageInstances( ref r, name );
-                    break;
-                case "TargetFrameworks":
-                    JsonHelper.EnsureStartArray( ref r, name );
-                    targetFrameworks = ImmutableArray.CreateBuilder<string>();
-                    while( r.Read() && r.TokenType != JsonTokenType.EndArray )
-                    {
-                        targetFrameworks.Add( JsonHelper.GetString( ref r, name ) );
-                    }
-                    JsonHelper.EnsureEndArray( ref r, name );
+                case "Repositories":
+                    repositories = JsonHelper.ReadRandomIds( ref r, name );
                     break;
                 default:
                     r.Skip();
                     break;
             }
         }
-        JsonHelper.EnsureEndObject( ref r, nameof( VersionRequirement ) );
-        return new VersionRequirement( JsonHelper.Required( version, "Version", nameof( VersionRequirement ) ),
-                                       JsonHelper.Required( requiredBy, "RequiredBy", nameof( VersionRequirement ) )
-                                                 .DrainToImmutable(),
-                                       JsonHelper.Required( targetFrameworks,
-                                                            "TargetFrameworks",
-                                                            nameof( VersionRequirement ) )
-                                                 .DrainToImmutable() );
+        JsonHelper.EnsureEndObject( ref r, nameof( VersionResolution ) );
+        return new VersionResolution( JsonHelper.Required( version, "Version", nameof( VersionResolution ) ),
+                                      JsonHelper.Required( repositories, "Repositories", nameof( VersionResolution ) )
+                                                .DrainToImmutable() );
     }
 }
 
 /// <summary>
-/// A transitive dependency whose required versions disagree, or which disagrees with a
-/// <see cref="PublishedProfile.DirectDependencies"/> or <see cref="PublishedProfile.ProducedPackages"/>
-/// entry. The inherited <see cref="PackageInstance.Version"/> is what the profile resolves to and
-/// <see cref="ResolvedFrom"/> says where that version comes from.
+/// A transitive dependency that the publication's repositories did not resolve to a single version, or whose
+/// resolution disagrees with a <see cref="PublishedProfile.DirectDependencies"/> or
+/// <see cref="PublishedProfile.ProducedPackages"/> entry. The inherited <see cref="PackageInstance.Version"/>
+/// is what the profile resolves to and <see cref="ResolvedFrom"/> says where that version comes from.
 /// <para>
-/// Only the harmful direction is reported: a transitive requirement below what the profile references
-/// or produces is invisible to a restore, so an anchored ambiguity carries only the
-/// <see cref="Requirements"/> that ask for more.
+/// Only the harmful direction is reported: a resolution below what the profile references or produces is
+/// invisible to a restore, so an anchored ambiguity carries only the <see cref="Resolutions"/> that are
+/// greater.
 /// </para>
 /// </summary>
 public sealed class AmbiguousDependency : PackageInstance
 {
     readonly VersionSource _resolvedFrom;
-    readonly ImmutableArray<VersionRequirement> _requirements;
+    readonly ImmutableArray<VersionResolution> _resolutions;
 
     /// <summary>
     /// Initializes a new ambiguous dependency.
     /// <para>
-    /// The <paramref name="requirements"/> are sorted by descending <see cref="VersionRequirement.Version"/>,
-    /// as are each requirement's <see cref="VersionRequirement.RequiredBy"/> and
-    /// <see cref="VersionRequirement.TargetFrameworks"/>: an ambiguous dependency is always in a canonical
-    /// form, whatever the order in which its requirements have been discovered.
+    /// The <paramref name="resolutions"/> are sorted by descending <see cref="VersionResolution.Version"/>, as
+    /// are each resolution's <see cref="VersionResolution.Repositories"/>: an ambiguous dependency is always in
+    /// a canonical form, whatever the order in which its resolutions have been discovered.
     /// </para>
     /// </summary>
     /// <param name="packageId">The package identifier.</param>
     /// <param name="version">The version this profile resolves the <paramref name="packageId"/> to.</param>
     /// <param name="resolvedFrom">Where the <paramref name="version"/> comes from.</param>
-    /// <param name="requirements">
-    /// The transitive requirements that disagree with the <paramref name="version"/>. Must not be default
-    /// nor empty, must not require the same version twice, and each of them must have at least one
-    /// <see cref="VersionRequirement.RequiredBy"/>.
+    /// <param name="resolutions">
+    /// The resolutions that disagree with the <paramref name="version"/>. Must not be default nor empty, must
+    /// not carry the same version twice, and each of them must name at least one repository.
     /// <para>
-    /// When <paramref name="resolvedFrom"/> is <see cref="VersionSource.TransitiveDependencies"/> there
-    /// must be at least 2 of them and the <paramref name="version"/> must be the greatest one. Otherwise
-    /// they must all be greater than the <paramref name="version"/>.
+    /// A repository CAN appear in two resolutions: its own restore resolves one identifier to two versions when
+    /// two of its target frameworks resolve differently.
+    /// </para>
+    /// <para>
+    /// When <paramref name="resolvedFrom"/> is <see cref="VersionSource.TransitiveDependencies"/> there must be
+    /// at least 2 of them and the <paramref name="version"/> must be the greatest one. Otherwise they must all
+    /// be greater than the <paramref name="version"/>.
     /// </para>
     /// </param>
     public AmbiguousDependency( string packageId,
                                 SVersion version,
                                 VersionSource resolvedFrom,
-                                ImmutableArray<VersionRequirement> requirements )
+                                ImmutableArray<VersionResolution> resolutions )
         : base( packageId, version )
     {
         if( resolvedFrom is not VersionSource.TransitiveDependencies
@@ -205,125 +177,102 @@ public sealed class AmbiguousDependency : PackageInstance
         {
             throw new ArgumentException( $"Invalid VersionSource '{(int)resolvedFrom}'.", nameof( resolvedFrom ) );
         }
-        if( requirements.IsDefault )
+        if( resolutions.IsDefault )
         {
-            throw new ArgumentException( "Requirements must be initialized.", nameof( requirements ) );
+            throw new ArgumentException( "Resolutions must be initialized.", nameof( resolutions ) );
         }
-        if( requirements.IsEmpty )
+        if( resolutions.IsEmpty )
         {
-            throw new ArgumentException( $"Ambiguous dependency '{packageId}@{version}' has no requirement: "
+            throw new ArgumentException( $"Ambiguous dependency '{packageId}@{version}' has no resolution: "
                                          + "an ambiguity is a disagreement, so at least one is required.",
-                                         nameof( requirements ) );
+                                         nameof( resolutions ) );
         }
-        requirements = Canonicalize( packageId, version, requirements );
+        resolutions = Canonicalize( packageId, version, resolutions );
         if( resolvedFrom == VersionSource.TransitiveDependencies )
         {
-            // Nothing outside the closure anchors this identifier: NuGet's highest-wins applies, so the
-            // resolved version is the greatest requirement. A single requirement resolves without any
-            // disagreement at all: such an identifier belongs to TransitiveDependencies.Regular.
-            if( requirements.Length < 2 )
+            // Nothing outside the closure anchors this identifier: NuGet's highest-wins applies across the
+            // packages a consumer takes together, so the resolved version is the greatest resolution. A
+            // single resolution is no disagreement at all: such an identifier belongs to
+            // TransitiveDependencies.Regular.
+            if( resolutions.Length < 2 )
             {
                 throw new ArgumentException( $"Ambiguous dependency '{packageId}@{version}' is resolved from its own "
-                                             + $"requirements but has only one ('{requirements[0].Version}'): it is a "
+                                             + $"resolutions but has only one ('{resolutions[0].Version}'): it is a "
                                              + "regular transitive dependency.",
-                                             nameof( requirements ) );
+                                             nameof( resolutions ) );
             }
-            if( requirements[0].Version != version )
+            if( resolutions[0].Version != version )
             {
                 throw new ArgumentException( $"Ambiguous dependency '{packageId}@{version}' is resolved from its own "
-                                             + "requirements: its version must be the greatest of them, which is "
-                                             + $"'{requirements[0].Version}'.",
+                                             + "resolutions: its version must be the greatest of them, which is "
+                                             + $"'{resolutions[0].Version}'.",
                                              nameof( version ) );
             }
         }
         else
         {
             // Anchored on DirectDependencies or ProducedPackages: only the harmful direction is kept, so
-            // every requirement asks for strictly more than what the profile resolves to. Requirements
-            // are sorted by descending version: the last one is the smallest.
-            var smallest = requirements[^1].Version;
+            // every resolution is strictly greater than what the profile resolves to. Resolutions are
+            // sorted by descending version: the last one is the smallest.
+            var smallest = resolutions[^1].Version;
             if( smallest <= version )
             {
                 throw new ArgumentException( $"Ambiguous dependency '{packageId}@{version}' is anchored on "
-                                             + $"{resolvedFrom}: its requirements must all be greater than "
+                                             + $"{resolvedFrom}: its resolutions must all be greater than "
                                              + $"'{version}', but '{smallest}' is not.",
-                                             nameof( requirements ) );
+                                             nameof( resolutions ) );
             }
         }
         _resolvedFrom = resolvedFrom;
-        _requirements = requirements;
+        _resolutions = resolutions;
     }
 
-    // Sorts the requirements (and their content) and checks them.
-    static ImmutableArray<VersionRequirement> Canonicalize( string packageId,
-                                                            SVersion version,
-                                                            ImmutableArray<VersionRequirement> requirements )
+    // Sorts the resolutions (and their content) and checks them.
+    static ImmutableArray<VersionResolution> Canonicalize( string packageId,
+                                                           SVersion version,
+                                                           ImmutableArray<VersionResolution> resolutions )
     {
-        var b = ImmutableArray.CreateBuilder<VersionRequirement>( requirements.Length );
-        foreach( var req in requirements )
+        var b = ImmutableArray.CreateBuilder<VersionResolution>( resolutions.Length );
+        foreach( var res in resolutions )
         {
-            if( req.Version is null )
+            if( res.Version is null )
             {
-                throw new ArgumentException( $"Requirement of '{packageId}@{version}' has no version.",
-                                             nameof( requirements ) );
+                throw new ArgumentException( $"Resolution of '{packageId}@{version}' has no version.",
+                                             nameof( resolutions ) );
             }
-            if( req.RequiredBy.IsDefault || req.RequiredBy.IsEmpty )
+            if( res.Repositories.IsDefault || res.Repositories.IsEmpty )
             {
-                throw new ArgumentException( $"Requirement '{packageId}@{req.Version}' has no RequiredBy: a "
-                                             + "requirement comes from at least one package.",
-                                             nameof( requirements ) );
+                throw new ArgumentException( $"Resolution '{packageId}@{res.Version}' has no repository: a "
+                                             + "resolution comes from at least one repository.",
+                                             nameof( resolutions ) );
             }
-            if( req.TargetFrameworks.IsDefault )
+            var repositories = res.Repositories.Sort();
+            for( int i = 0; i < repositories.Length; ++i )
             {
-                throw new ArgumentException( $"Requirement '{packageId}@{req.Version}' has no TargetFrameworks: "
-                                             + "the array must be initialized (it can be empty).",
-                                             nameof( requirements ) );
-            }
-            // PackageInstance's comparison is by PackageId (case insensitive) then by Version: a
-            // duplicate can only be adjacent in the sorted array.
-            var requiredBy = req.RequiredBy.Sort();
-            for( int i = 0; i < requiredBy.Length; ++i )
-            {
-                var p = requiredBy[i];
-                if( p is null )
+                var id = repositories[i];
+                if( !id.IsValid )
                 {
-                    throw new ArgumentException( $"Requirement '{packageId}@{req.Version}' has a null RequiredBy.",
-                                                 nameof( requirements ) );
+                    throw new ArgumentException( $"Resolution '{packageId}@{res.Version}' names an invalid "
+                                                 + "repository identifier.",
+                                                 nameof( resolutions ) );
                 }
-                if( i > 0 && requiredBy[i - 1] == p )
+                if( i > 0 && repositories[i - 1] == id )
                 {
-                    throw new ArgumentException( $"Requirement '{packageId}@{req.Version}' is required by '{p}' "
-                                                 + "more than once.",
-                                                 nameof( requirements ) );
+                    throw new ArgumentException( $"Resolution '{packageId}@{res.Version}' names the repository "
+                                                 + $"'{id}' more than once.",
+                                                 nameof( resolutions ) );
                 }
             }
-            var targetFrameworks = req.TargetFrameworks.Sort( StringComparer.Ordinal );
-            for( int i = 0; i < targetFrameworks.Length; ++i )
-            {
-                var f = targetFrameworks[i];
-                if( f is null )
-                {
-                    throw new ArgumentException( $"Requirement '{packageId}@{req.Version}' has a null "
-                                                 + "TargetFrameworks.",
-                                                 nameof( requirements ) );
-                }
-                if( i > 0 && string.Equals( targetFrameworks[i - 1], f, StringComparison.Ordinal ) )
-                {
-                    throw new ArgumentException( $"Requirement '{packageId}@{req.Version}' carries the target "
-                                                 + $"framework '{f}' more than once.",
-                                                 nameof( requirements ) );
-                }
-            }
-            b.Add( new VersionRequirement( req.Version, requiredBy, targetFrameworks ) );
+            b.Add( new VersionResolution( res.Version, repositories ) );
         }
         var sorted = b.DrainToImmutable().Sort( static ( r1, r2 ) => r2.Version.CompareTo( r1.Version ) );
         for( int i = 1; i < sorted.Length; ++i )
         {
             if( sorted[i].Version == sorted[i - 1].Version )
             {
-                throw new ArgumentException( $"Ambiguous dependency '{packageId}' requires '{sorted[i].Version}' "
-                                             + "more than once: such requirements must be merged.",
-                                             nameof( requirements ) );
+                throw new ArgumentException( $"Ambiguous dependency '{packageId}' resolves '{sorted[i].Version}' "
+                                             + "more than once: such resolutions must be merged.",
+                                             nameof( resolutions ) );
             }
         }
         return sorted;
@@ -335,10 +284,10 @@ public sealed class AmbiguousDependency : PackageInstance
     public VersionSource ResolvedFrom => _resolvedFrom;
 
     /// <summary>
-    /// Gets the transitive requirements that disagree with the resolved <see cref="PackageInstance.Version"/>,
-    /// ordered by descending <see cref="VersionRequirement.Version"/>. Never empty.
+    /// Gets the resolutions that disagree with the resolved <see cref="PackageInstance.Version"/>, ordered by
+    /// descending <see cref="VersionResolution.Version"/>. Never empty.
     /// </summary>
-    public ImmutableArray<VersionRequirement> Requirements => _requirements;
+    public ImmutableArray<VersionResolution> Resolutions => _resolutions;
 
     /// <summary>
     /// Writes this ambiguous dependency as a Json object.
@@ -352,10 +301,10 @@ public sealed class AmbiguousDependency : PackageInstance
         // effective closure reads the same place whatever the anchor.
         w.WriteString( "Package", ToString() );
         w.WriteString( "ResolvedFrom", _resolvedFrom.ToString() );
-        w.WriteStartArray( "Requirements" );
-        foreach( var req in _requirements )
+        w.WriteStartArray( "Resolutions" );
+        foreach( var res in _resolutions )
         {
-            req.Write( w );
+            res.Write( w );
         }
         w.WriteEndArray();
         w.WriteEndObject();
@@ -376,7 +325,7 @@ public sealed class AmbiguousDependency : PackageInstance
         JsonHelper.EnsureStartObject( ref r, nameof( AmbiguousDependency ) );
         PackageInstance? package = null;
         VersionSource? resolvedFrom = null;
-        ImmutableArray<VersionRequirement>.Builder? requirements = null;
+        ImmutableArray<VersionResolution>.Builder? resolutions = null;
         while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
         {
             var name = JsonHelper.StartProperty( ref r );
@@ -388,12 +337,12 @@ public sealed class AmbiguousDependency : PackageInstance
                 case "ResolvedFrom":
                     resolvedFrom = JsonHelper.GetVersionSource( ref r, name );
                     break;
-                case "Requirements":
+                case "Resolutions":
                     JsonHelper.EnsureStartArray( ref r, name );
-                    requirements = ImmutableArray.CreateBuilder<VersionRequirement>();
+                    resolutions = ImmutableArray.CreateBuilder<VersionResolution>();
                     while( r.Read() && r.TokenType != JsonTokenType.EndArray )
                     {
-                        requirements.Add( VersionRequirement.Read( ref r ) );
+                        resolutions.Add( VersionResolution.Read( ref r ) );
                     }
                     JsonHelper.EnsureEndArray( ref r, name );
                     break;
@@ -411,8 +360,8 @@ public sealed class AmbiguousDependency : PackageInstance
         return new AmbiguousDependency( package.PackageId,
                                         package.Version,
                                         resolvedFrom.Value,
-                                        JsonHelper.Required( requirements,
-                                                             "Requirements",
+                                        JsonHelper.Required( resolutions,
+                                                             "Resolutions",
                                                              nameof( AmbiguousDependency ) )
                                                   .DrainToImmutable() );
     }

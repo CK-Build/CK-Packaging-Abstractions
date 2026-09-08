@@ -3,9 +3,9 @@ Defines a Profile as a coherent set of package instances.
 A `PublishedProfile` is the immutable set of packages a CKli World has published under one version:
 its `Repositories` hold the `PackageInstance` they produced, indexed by `ProducedPackages`, and the
 profile carries at most one version per package identifier. It can also describe what those
-repositories consume: the `DirectDependencies` they reference and the `TransitiveDependencies` closure
-of those, whose `Ambiguous` entries carry the versions that disagree and the anchor each one resolves
-from. A profile can be deprecated (`Deprecate`, `OnDeprecatedPackage`), which yields a new profile:
+repositories consume: the `DirectDependencies` they reference and the `TransitiveDependencies` a
+restore brings beyond those, whose `Ambiguous` entries carry the versions that disagree, the
+repositories that resolved each one and the anchor it resolves from. A profile can be deprecated (`Deprecate`, `OnDeprecatedPackage`), which yields a new profile:
 the model is a set of immutable values with updaters.
 
 Serialization uses the basic `Utf8JsonWriter`/`Utf8JsonReader`: `PublishedProfile.Write`,

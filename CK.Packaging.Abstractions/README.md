@@ -43,20 +43,24 @@ serialized.
 ### DirectDependencies and TransitiveDependencies
 
 A profile can also describe what its repositories *consume*. Both sets are optional and default to
-empty - and an empty `TransitiveDependencies` says nothing about the closure, not that there is none.
+empty - and an empty `TransitiveDependencies` says nothing about the transitive packages, not that
+there are none.
 
 - `DirectDependencies` are the packages consumed by at least one `Repository`, minus the produced
   identifiers. Like the produced packages, one version per identifier - and none of them can be a
   produced one, since the two sets are complementary by definition.
-- `TransitiveDependencies` is the closure of those direct dependencies' own dependencies, in three
-  lists:
-  - `Regular` - the ones that resolve to a single version.
-  - `Ambiguous` - the ones whose required versions disagree (below).
-  - `Missing` - the required instances whose nuspec could not be read, which is what makes
-    `IsComplete` false. This is a marker rather than a fourth list of its own packages: such an
-    instance also appears in `Regular` or `Ambiguous` unless it is a direct dependency.
+- `TransitiveDependencies` is what a restore brings beyond those - the union of what NuGet resolved
+  transitively for each repository - in two lists:
+  - `Regular` - the ones every repository resolved to the same single version.
+  - `Ambiguous` - the ones the repositories disagreed on, or that disagree with the profile itself
+    (below).
 
-`Regular` and `Ambiguous` partition the closure by package identifier - the two never share one, and
+Nothing here is a *computed* closure: nothing is walked, nothing can be unreachable and no package
+can be missing. Each repository's set comes from NuGet's own resolution - target framework aware and
+pruned - so an `Ambiguous` entry exists only because two repositories, or one repository and the
+profile, ended up with different versions.
+
+`Regular` and `Ambiguous` partition the set by package identifier - the two never share one, and
 neither can name a direct or produced identifier as a regular entry - so a consumer that ignores the
 details reads their union as a flat, coherent set of resolved instances.
 
@@ -64,28 +68,30 @@ An [`AmbiguousDependency`](AmbiguousDependency.cs) **is** a `PackageInstance`: i
 is what this profile resolves the identifier to, and its `ResolvedFrom` says where that version comes
 from. Each [`VersionSource`](VersionSource.cs) value names the profile property that holds it:
 
-| `ResolvedFrom` | The resolved version is | The `Requirements` are |
+| `ResolvedFrom` | The resolved version is | The `Resolutions` are |
 |---|---|---|
-| `TransitiveDependencies` | the greatest requirement (NuGet's highest-wins) | all of them, at least 2, disagreeing among themselves |
-| `DirectDependencies` | the direct dependency's version, which NuGet's nearest-wins makes authoritative | the ones asking for **more** |
-| `ProducedPackages` | the version this profile produces | the ones asking for **more** |
+| `TransitiveDependencies` | the greatest resolution (NuGet's highest-wins) | all of them, at least 2, disagreeing among themselves |
+| `DirectDependencies` | the direct dependency's version, which NuGet's nearest-wins makes authoritative | the ones that resolved to **more** |
+| `ProducedPackages` | the version this profile produces | the ones that resolved to **more** |
 
-Only the harmful direction is reported. A transitive requirement *below* what the profile references
-or produces is invisible to a restore, and a requirement equal to the anchor is not a disagreement at
-all - so an anchored identifier with nothing greater to report is simply not in the list, since
-`DirectDependencies` or `ProducedPackages` already states its version.
+Only the harmful direction is reported. A resolution *below* what the profile references or produces
+is invisible to a restore, and one equal to the anchor is not a disagreement at all - so an anchored
+identifier with nothing greater to report is simply not in the list, since `DirectDependencies` or
+`ProducedPackages` already states its version.
 
-A `VersionRequirement` is one required version, the closure members that require it (`RequiredBy`) and
-the target frameworks under which they do (`TargetFrameworks` - the union across the `RequiredBy`,
-where the empty string stands for "any framework"). Requirements are sorted by descending version, and
-so is everything inside them: canonical form again. Its equality is **structural**, unlike the one a
-`record struct` would synthesize (`ImmutableArray`'s own equality compares the underlying array by
-reference).
+A `VersionResolution` is one resolved version and the `Repositories` whose restore produced it, named
+by their `RepositoryKey.Id` - the join key with `PublishedProfile.Repositories`, which the constructor
+checks. Those identifiers are what a disagreement has to name to be diagnosable: NuGet's package list
+never says which *package* pulled an identifier in, only which project ended up with which version.
+One repository can appear in two resolutions of the same ambiguity - its own restore resolves an
+identifier to two versions when two of its target frameworks resolve differently. Resolutions are
+sorted by descending version, and so is everything inside them: canonical form again. Their equality
+is **structural**, unlike the one a `record struct` would synthesize (`ImmutableArray`'s own equality
+compares the underlying array by reference).
 
-> The model is **TFM-blind**: the closure is one flat set, not one per target framework. The
-frameworks are recorded on every requirement, but nothing here filters by them - for a given target
-NuGet picks the single best-matching dependency group of each package, so a per-target closure is not
-a subset of this one. Computing those, if the need arises, is CKli's business, from the NuGet cache.
+> The model is **TFM-blind**: one flat set, not one per target framework - `BuildContentInfo` has
+already flattened the frameworks away before a profile is built. Recovering them means making that
+stored format framework-qualified first; it is CKli's business, not this contract's.
 
 ### Deprecation
 
@@ -155,28 +161,24 @@ reflection, no converters, no source generator, and the format is exactly what
       {
         "Package": "System.Text.Json@9.0.0",
         "ResolvedFrom": "DirectDependencies",
-        "Requirements": [
+        "Resolutions": [
           {
             "Version": "10.0.0",
-            "RequiredBy": [
-              "Some.Analyzer@2.1.0"
-            ],
-            "TargetFrameworks": [
-              "net10.0"
+            "Repositories": [
+              "AQAAAAAAAAA"
             ]
           }
         ]
       }
-    ],
-    "Missing": []
+    ]
   }
 }
 ```
 
 Packages are their `PackageInstance.ToString()` - `"packageId@version"` - rather than an object:
 short, diffable, and parsed back by `PackageInstance` itself. An ambiguity is the one exception: it
-needs its anchor and its requirements, so it is an object whose `"Package"` field carries the resolved
-instance - the same field whatever the anchor, for a consumer that wants only the effective closure.
+needs its anchor and its resolutions, so it is an object whose `"Package"` field carries the resolved
+instance - the same field whatever the anchor, for a consumer that wants only the effective set.
 
 A dependency's version is any **SemVer**: an external package is not bound to CSemVer, unlike the
 profile's own `Version`.
@@ -184,7 +186,7 @@ profile's own `Version`.
 The API:
 
 - `Write( Utf8JsonWriter )` writes the object. `Repository.Write`, `TransitiveDependencies.Write`,
-  `AmbiguousDependency.Write` and `VersionRequirement.Write` do the same for one of their own, and
+  `AmbiguousDependency.Write` and `VersionResolution.Write` do the same for one of their own, and
   each has the matching `Read`.
 - `Read( ref Utf8JsonReader )` must be given a reader on the `StartObject` token (or one that has
   not started yet) and **leaves it on the `EndObject` token**. That is the usual converter contract,
@@ -204,9 +206,9 @@ naming the property. A document that parses but does not describe a coherent pro
 constructor's `ArgumentException`.
 
 The two dependency sets are the exception to "missing throws": they are **optional**, absent means
-empty, and a profile written before they existed still parses. There is no file format version, and
-`IsComplete` covers the only case a consumer must distinguish. They are nevertheless always written,
-empty or not, so that every profile file has the same shape.
+empty, and a profile written before they existed still parses. There is no file format version:
+an empty `TransitiveDependencies` and an absent one say the same thing, which is why none is needed.
+They are nevertheless always written, empty or not, so that every profile file has the same shape.
 
 ## Where do profiles live?
 

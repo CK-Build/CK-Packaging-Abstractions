@@ -202,6 +202,28 @@ static class JsonHelper
     }
 
     /// <summary>
+    /// Reads an array of <see cref="RandomId"/> strings.
+    /// <para>
+    /// The <paramref name="r"/> must be on the <see cref="JsonTokenType.StartArray"/> token and is left
+    /// on the <see cref="JsonTokenType.EndArray"/> one.
+    /// </para>
+    /// </summary>
+    /// <param name="r">The reader.</param>
+    /// <param name="propertyName">The property name (used by the error message).</param>
+    /// <returns>The identifiers.</returns>
+    internal static ImmutableArray<RandomId>.Builder ReadRandomIds( ref Utf8JsonReader r, string propertyName )
+    {
+        EnsureStartArray( ref r, propertyName );
+        var ids = ImmutableArray.CreateBuilder<RandomId>();
+        while( r.Read() && r.TokenType != JsonTokenType.EndArray )
+        {
+            ids.Add( GetRandomId( ref r, propertyName ) );
+        }
+        EnsureEndArray( ref r, propertyName );
+        return ids;
+    }
+
+    /// <summary>
     /// Gets a valid <see cref="RandomId"/>.
     /// </summary>
     /// <param name="r">The reader.</param>

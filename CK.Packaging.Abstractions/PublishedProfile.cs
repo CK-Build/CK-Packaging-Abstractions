@@ -19,8 +19,9 @@ namespace CK.Packaging.Abstractions;
 /// <para>
 /// Beyond what its repositories produce, a profile can also describe what they consume: the
 /// <see cref="DirectDependencies"/> are the external packages they reference and the
-/// <see cref="TransitiveDependencies"/> are the closure of those. Both are optional - an empty
-/// <see cref="TransitiveDependencies"/> says nothing about the closure, not that there is none.
+/// <see cref="TransitiveDependencies"/> are what a restore brings beyond those. Both are optional - an
+/// empty <see cref="TransitiveDependencies"/> says nothing about the transitive packages, not that there
+/// are none.
 /// </para>
 /// </summary>
 public sealed partial class PublishedProfile
@@ -57,12 +58,13 @@ public sealed partial class PublishedProfile
     /// Defaults to empty.
     /// </param>
     /// <param name="transitiveDependencies">
-    /// The closure of the <paramref name="directDependencies"/>. Its
+    /// What a restore brings beyond the <paramref name="directDependencies"/>. Its
     /// <see cref="TransitiveDependencies.Regular"/> must share no identifier with the
-    /// <paramref name="directDependencies"/> nor with <see cref="ProducedPackages"/>, and each of its
+    /// <paramref name="directDependencies"/> nor with <see cref="ProducedPackages"/>, each of its
     /// <see cref="TransitiveDependencies.Ambiguous"/> must agree with its own
-    /// <see cref="AmbiguousDependency.ResolvedFrom"/>. Defaults to
-    /// <see cref="Abstractions.TransitiveDependencies.Empty"/>.
+    /// <see cref="AmbiguousDependency.ResolvedFrom"/>, and every repository a
+    /// <see cref="VersionResolution"/> names must be one of the <paramref name="repositories"/>.
+    /// Defaults to <see cref="Abstractions.TransitiveDependencies.Empty"/>.
     /// </param>
     /// <param name="isDeprecated">Whether this profile is deprecated.</param>
     public PublishedProfile( Uri stackUrl,
@@ -94,10 +96,10 @@ public sealed partial class PublishedProfile
                                                                         ? 1
                                                                         : string.CompareOrdinal( r1.Key.Url.AbsoluteUri,
                                                                                                  r2.Key.Url.AbsoluteUri ) );
-        _producedPackages = CreatePackageIndex( _repositories );
+        _producedPackages = CreatePackageIndex( _repositories, out var repositoryIds );
         _directDependencies = CreateDirectDependencies( directDependencies, _producedPackages, out var directIndex );
         _transitiveDependencies = transitiveDependencies ?? TransitiveDependencies.Empty;
-        CheckTransitiveDependencies( _transitiveDependencies, directIndex, _producedPackages );
+        CheckTransitiveDependencies( _transitiveDependencies, directIndex, _producedPackages, repositoryIds );
         _stackUrl = stackUrl;
         _world = world;
         _version = version;
@@ -119,11 +121,13 @@ public sealed partial class PublishedProfile
         _toString = o._toString;
     }
 
-    // Indexes the packages of the (sorted) repositories and checks the profile's coherency.
-    static Dictionary<string, PackageInstance> CreatePackageIndex( ImmutableArray<Repository> repositories )
+    // Indexes the packages of the (sorted) repositories and checks the profile's coherency. The
+    // repository identifiers are collected on the way: a VersionResolution names them.
+    static Dictionary<string, PackageInstance> CreatePackageIndex( ImmutableArray<Repository> repositories,
+                                                                   out HashSet<RandomId> repositoryIds )
     {
         var packages = new Dictionary<string, PackageInstance>( StringComparer.OrdinalIgnoreCase );
-        var ids = new HashSet<RandomId>();
+        var ids = repositoryIds = new HashSet<RandomId>();
         Uri? previousUrl = null;
         foreach( var r in repositories )
         {
@@ -194,10 +198,12 @@ public sealed partial class PublishedProfile
         return directDependencies;
     }
 
-    // Checks the closure against the two anchors it can name.
+    // Checks the transitive dependencies against the two anchors they can name, and every repository
+    // their resolutions name against the profile's own repositories.
     static void CheckTransitiveDependencies( TransitiveDependencies transitiveDependencies,
                                              Dictionary<string, PackageInstance> direct,
-                                             Dictionary<string, PackageInstance> produced )
+                                             Dictionary<string, PackageInstance> produced,
+                                             HashSet<RandomId> repositoryIds )
     {
         foreach( var p in transitiveDependencies.Regular )
         {
@@ -231,6 +237,20 @@ public sealed partial class PublishedProfile
                     CheckNoAnchor( a, produced, "produced by this profile", "ProducedPackages" );
                     break;
             }
+            // A resolution is an observation made by one of this profile's repositories: an identifier
+            // that names none of them cannot be joined back to anything.
+            foreach( var res in a.Resolutions )
+            {
+                foreach( var id in res.Repositories )
+                {
+                    if( !repositoryIds.Contains( id ) )
+                    {
+                        throw new ArgumentException( $"Ambiguous dependency '{a}' is resolved by the repository "
+                                                     + $"'{id}' which is not one of this profile's repositories.",
+                                                     nameof( transitiveDependencies ) );
+                    }
+                }
+            }
         }
 
         // These two are not static: they close over the constructor's parameter name.
@@ -257,7 +277,7 @@ public sealed partial class PublishedProfile
         {
             if( anchors.TryGetValue( a.PackageId, out var anchor ) )
             {
-                throw new ArgumentException( $"Ambiguous dependency '{a}' is resolved from its own requirements but "
+                throw new ArgumentException( $"Ambiguous dependency '{a}' is resolved from its own resolutions but "
                                              + $"'{anchor}' is {what}: it must be resolved from {source}.",
                                              nameof( transitiveDependencies ) );
             }
@@ -304,9 +324,9 @@ public sealed partial class PublishedProfile
     public ImmutableArray<PackageInstance> DirectDependencies => _directDependencies;
 
     /// <summary>
-    /// Gets the closure of the <see cref="DirectDependencies"/>' own dependencies. Never null: it is
-    /// <see cref="Abstractions.TransitiveDependencies.Empty"/> when this profile carries no dependency
-    /// information.
+    /// Gets what a restore of this profile's packages brings beyond the <see cref="DirectDependencies"/>.
+    /// Never null: it is <see cref="Abstractions.TransitiveDependencies.Empty"/> when this profile carries
+    /// no dependency information.
     /// </summary>
     public TransitiveDependencies TransitiveDependencies => _transitiveDependencies;
 
