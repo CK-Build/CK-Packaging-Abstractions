@@ -127,6 +127,61 @@ prefixes a branch or folder name with it.
 `IsValidRepositoryName` and `IsValidLTSName` validate the two halves and match the **whole** name -
 `"no way!"` is not a valid repository name. Equality and hashing use the case insensitive `FullName`.
 
+## PublishedIndex
+
+A [`PublishedIndex`](PublishedIndex.cs) is the index of a *set* of profiles: their versions, split
+into the alive ones and the `IsDeprecated` ones, each grouped by branch and each group ordered from
+the latest to the oldest.
+
+```csharp
+var index = PublishedIndex.Create( profiles );
+var latestAlpha = index.GetAlive( PublishedIndex.GetGroupName( "alpha", isCI: false ) ).FirstOrDefault();
+```
+
+```json
+{
+  "Alive": {
+    "(stable)": [ "1.2.5", "1.2.3" ],
+    "(stable-ci)": [ "1.2.6--ci.0" ],
+    "alpha-ci": [ "1.3.0-alpha.0.ci.7" ],
+    "explo/some-explo": [ "0.0.0-0.some-explo" ]
+  },
+  "Deprecated": {
+    "(stable)": [ "1.2.4" ],
+    "alpha": [ "1.3.0-alpha" ]
+  }
+}
+```
+
+It carries versions and nothing else, because a version is enough to reach its profile
+(`GetProfilePath` below). That is what makes it the thing a consumer reads to *choose* a publication
+- the latest one of a branch, say - without opening every profile file.
+
+**The grouping is not stored state.** A group name is a pure function of the version it holds, so an
+index cannot disagree with itself about where a version belongs:
+
+- `GetGroupName( SVersion )` is that function: the version's `SVersion.BranchName`, with the CI
+  builds of a branch in their own `-ci` group. It requires a Conformant `SVersion`, which a profile
+  version always is.
+- `GetGroupName( branchName, isCI )` is the same rule from a branch, and it is the overload to look
+  a branch up with. The `branchName` is the **version** side of a branch - the empty string for the
+  stable line, `"alpha"` to `"zulu"`, `"explo/{name}"` - not the name a repository gives it.
+- The constructor groups the versions it is given, so `Read` *checks* the group names in the file
+  rather than trusting them: a version listed under a group it doesn't belong to throws.
+
+The stable group is named `"(stable)"` rather than a root branch name, deliberately: a World's root
+branch is the business of whoever models branches and can be renamed (an LTS World has its own),
+while an index names the versions it contains. The parentheses cannot collide with a branch name,
+and the ordinal ordering of the groups then puts `"(stable)"` first and every group immediately
+before its own CI one - `)` and the end of a string both precede `-`.
+
+`"(stable)"` is also the one group that is written even when empty (in both sets), so a consumer
+always has the root list to read. Every other group exists only because a version landed in it, and
+`GetAlive` / `GetDeprecated` answer an empty list for an absent one.
+
+A version identifies a profile, hence a file, so it appears **once** across the two sets: a
+duplicate - or the same version listed as both alive and deprecated - throws.
+
 ## Json serialization
 
 Serialization uses the **basic** `Utf8JsonWriter` and `Utf8JsonReader`, not `JsonSerializer`: no
@@ -195,10 +250,12 @@ The API:
   `Utf8JsonReader` does not handle.
 - `ToUtf8Bytes( indented )` / `ToJsonString( indented )` produce the text.
 
+`PublishedIndex` has the same four, over the shape shown in its own section above.
+
 Two properties the output deliberately has: the new line is always `\r\n` (`JsonWriterOptions`
 otherwise follows `Environment.NewLine`, which would make the same profile differ per platform), and
 the encoder is the relaxed one - these are files, never embedded in html or in a script, so a
-version's `+metadata` and a package's `@` stay readable.
+version's `+metadata` and a package's `@` stay readable. Both are set once, for every type here.
 
 Reading is strict about what it understands and forgiving about what it does not: an unknown
 property is skipped, so the format can grow, but a missing or malformed one throws a `JsonException`
@@ -213,7 +270,12 @@ They are nevertheless always written, empty or not, so that every profile file h
 ## Where do profiles live?
 
 Not here. Storing profiles as files - one `v{Version}.json` per profile, in a folder subordinated to
-the version's branch - is CKli's job, and only its
+the version's branch, next to their `index.json` - is CKli's job, and only its
 [Publish plugin](https://github.com/CK-Build/CKli/blob/stable/StandardPlugins/CKli.Publish.Plugin/README.md)
-does it, through its `PublishedFolder`. This package stays a contract: it describes a profile and
-knows how to read and write one, and stops there.
+does it, through its `PublishedFolder`. This package stays a contract: it describes a profile, an
+index of profiles and where a profile file goes (`GetProfilePath`, `IndexFileName`), knows how to
+read and write both, and stops there. No `Directory`, no `File`, no url is opened.
+
+That split is what lets a *consumer* read a publication it does not own: given the bytes of an
+`index.json` - from a folder, a git tree, an http response, wherever they come from - and then the
+bytes of one profile file, this package answers what was published, with no CKli in sight.

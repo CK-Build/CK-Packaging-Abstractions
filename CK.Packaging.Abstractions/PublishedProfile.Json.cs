@@ -3,34 +3,12 @@ using System;
 using System.Buffers;
 using System.Collections.Immutable;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace CK.Packaging.Abstractions;
 
 public sealed partial class PublishedProfile
 {
-    // The Json writer options used by ToUtf8Bytes: the new line is explicitly "\r\n" (JsonWriterOptions
-    // defaults to Environment.NewLine) so that the produced files are the same on any platform.
-    static ReadOnlySpan<byte> _utf8Bom => [0xEF, 0xBB, 0xBF];
-
-    // The UnsafeRelaxedJsonEscaping encoder is used because these Json are files: they are never
-    // embedded in a html page nor in a script. This keeps the '+' of a version's build metadata
-    // and the '@' of a package instance readable.
-    static readonly JsonWriterOptions _indentedOptions = new JsonWriterOptions
-    {
-        Indented = true,
-        NewLine = "\r\n",
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
-
-    static readonly JsonWriterOptions _compactOptions = new JsonWriterOptions
-    {
-        Indented = false,
-        NewLine = "\r\n",
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
-
     /// <summary>
     /// Writes this profile as a Json object.
     /// </summary>
@@ -71,7 +49,7 @@ public sealed partial class PublishedProfile
     public byte[] ToUtf8Bytes( bool indented = true )
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using( var w = new Utf8JsonWriter( buffer, indented ? _indentedOptions : _compactOptions ) )
+        using( var w = new Utf8JsonWriter( buffer, indented ? JsonHelper.IndentedOptions : JsonHelper.CompactOptions ) )
         {
             Write( w );
         }
@@ -98,7 +76,7 @@ public sealed partial class PublishedProfile
     public static PublishedProfile Parse( ReadOnlySpan<byte> utf8Json )
     {
         // Utf8JsonReader doesn't handle the utf-8 BOM: a file written by another tool may have one.
-        if( utf8Json.StartsWith( _utf8Bom ) ) utf8Json = utf8Json.Slice( _utf8Bom.Length );
+        if( utf8Json.StartsWith( JsonHelper.Utf8Bom ) ) utf8Json = utf8Json.Slice( JsonHelper.Utf8Bom.Length );
         var r = new Utf8JsonReader( utf8Json, new JsonReaderOptions { CommentHandling = JsonCommentHandling.Skip } );
         var p = Read( ref r );
         if( r.Read() )

@@ -1,6 +1,7 @@
 using CK.Core;
 using System;
 using System.Collections.Immutable;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace CK.Packaging.Abstractions;
@@ -15,6 +16,37 @@ namespace CK.Packaging.Abstractions;
 /// </summary>
 static class JsonHelper
 {
+    /// <summary>
+    /// The utf-8 BOM. <see cref="Utf8JsonReader"/> doesn't handle it, but a file written by another
+    /// tool may have one: every Parse of this model skips it.
+    /// </summary>
+    internal static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
+
+    // These are files: the new line is explicitly "\r\n" (JsonWriterOptions defaults to
+    // Environment.NewLine) so that the same content produces the same bytes on any platform, and the
+    // encoder is the relaxed one because a file is never embedded in a html page nor in a script -
+    // this keeps the '+' of a version's build metadata and the '@' of a package instance readable.
+
+    /// <summary>
+    /// The writer options of the stored, human readable form.
+    /// </summary>
+    internal static readonly JsonWriterOptions IndentedOptions = new JsonWriterOptions
+    {
+        Indented = true,
+        NewLine = "\r\n",
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    /// <summary>
+    /// The writer options of the compact form.
+    /// </summary>
+    internal static readonly JsonWriterOptions CompactOptions = new JsonWriterOptions
+    {
+        Indented = false,
+        NewLine = "\r\n",
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     /// <summary>
     /// Ensures that the reader is on a <see cref="JsonTokenType.StartObject"/> token, reading the
     /// first token when the reader has not started yet.
