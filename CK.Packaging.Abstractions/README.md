@@ -17,14 +17,13 @@ version. It is immutable and always coherent: **the constructor is the guard**, 
 exists is a profile that made sense.
 
 ```csharp
-var profile = new PublishedProfile( stackUrl, world, SVersion.Parse( "1.2.3" ), repositories );
+var profile = new PublishedProfile( stackUrl, world, TimeVersion.Parse( "2026.11.21" ), repositories );
 ```
 
 What the constructor enforces:
 
 - `StackUrl` is an absolute url (the "-Stack" repository the World belongs to).
-- `Version` is a *Conformant SVersion* - `SVersion.VersionKind` is never `CSVersionKind.None`. A
-  profile is produced by a build, and a build produces a version one can reason about.
+- `Version` is a [`TimeVersion`](#timeversion): the version of the publication, not of a package.
 - No package identifier appears in more than one `Repository`, and none appears twice in the same
   one. A profile carries **at most one version per package identifier**; this is the whole point of
   calling it coherent, and violating it throws rather than picking a winner.
@@ -105,6 +104,44 @@ new profile rather than by mutating:
 
 Both are updaters: the caller keeps whichever instance it wants.
 
+## TimeVersion
+
+A profile names a set of packages produced by several repositories at several versions: no package
+version can name it. Its version is the publication's own, a [`TimeVersion`](TimeVersion.cs):
+
+- `Year.Month.Day` of the publication, then a `ClashNumber` that tells apart the publications of the
+  same day: 0 for the first one (`2026.11.21`), then 1, 2, etc. as a fourth part (`2026.11.21.1`).
+- The branch and CI build of what was published: `BranchName` (`""` for the stable line, `"alpha"` to
+  `"zulu"`, `"explo/{name}"`), `VersionKind`, `ExploratoryName`, `CINumber` and `IsCI`, with exactly the
+  semantics of a Conformant `SVersion` - and the same updaters: `SetBranchName`, `SetExploratoryName`,
+  `SetCINumber` (that never touches another part). There is no prerelease number.
+
+This type is orthogonal to `SVersion`, but it has an `SVersion` form: `ToSVersion()` is the
+`Year.Month.Day[.ClashNumber]` `SVersion` whose prerelease is the Conformant one of its branch and CI
+build, and it is its string form. `SVersion.AsTimeVersion()` is the way back (null when the version cannot be a `TimeVersion`):
+
+| `TimeVersion` | Branch | CI |
+|---|---|---|
+| `2026.11.21` | stable | no |
+| `2026.11.21.1--ci.0` | stable | yes |
+| `2026.11.21-alpha` | alpha | no |
+| `2026.11.21-alpha.0.ci.0` | alpha | yes |
+| `2026.11.21-0.spike` | explo/spike | no |
+
+The date must be valid and there is no build metadata. An explicit `.0` fourth part is rejected: a version
+has only one string (and one file name). A four-part `SVersion` is never a Conformant one
+(`2026.11.21.1-alpha` has no `SVersion.BranchName`): this is why this type exists.
+
+The ordering is by date, then clash number, then by the Conformant `SVersion` ordering of the branch and CI
+build. Only the first two matter: the versions are grouped by branch and CI build (see
+[PublishedIndex](#publishedindex)).
+
+**The legacy form.** The profiles written before this type have a `Year.DayOfYear.Number` Conformant
+`SVersion` (`2026.325.1-alpha` is `2026.11.21.1-alpha`). `AsTimeVersion( acceptDayOfYear: true )` and
+`TimeVersion.TryParse( s, out v, acceptDayOfYear: true )` convert it - it has been used since September
+2026, so its second part is greater than 12 and cannot be confused with a month - and the Json readers of
+a profile and of an index always accept it: the profiles and indexes published before it still read.
+
 ## Repository, RepositoryKey and RandomId
 
 A [`Repository`](Repository.cs) is a [`RepositoryKey`](RepositoryKey.cs) plus the
@@ -141,14 +178,14 @@ var latestAlpha = index.GetAlive( PublishedIndex.GetGroupName( "alpha", isCI: fa
 ```json
 {
   "Alive": {
-    "(stable)": [ "1.2.5", "1.2.3" ],
-    "(stable-ci)": [ "1.2.6--ci.0" ],
-    "alpha-ci": [ "1.3.0-alpha.0.ci.7" ],
-    "explo/some-explo": [ "0.0.0-0.some-explo" ]
+    "(stable)": [ "2026.11.21", "2026.11.20" ],
+    "(stable-ci)": [ "2026.11.22--ci.0" ],
+    "alpha-ci": [ "2026.11.21.1-alpha.0.ci.7" ],
+    "explo/some-explo": [ "2026.11.21-0.some-explo" ]
   },
   "Deprecated": {
-    "(stable)": [ "1.2.4" ],
-    "alpha": [ "1.3.0-alpha" ]
+    "(stable)": [ "2026.11.20.1" ],
+    "alpha": [ "2026.11.21-alpha" ]
   }
 }
 ```
@@ -160,9 +197,8 @@ It carries versions and nothing else, because a version is enough to reach its p
 **The grouping is not stored state.** A group name is a pure function of the version it holds, so an
 index cannot disagree with itself about where a version belongs:
 
-- `GetGroupName( SVersion )` is that function: the version's `SVersion.BranchName`, with the CI
-  builds of a branch in their own `-ci` group. It requires a Conformant `SVersion`, which a profile
-  version always is.
+- `GetGroupName( TimeVersion )` is that function: the version's `TimeVersion.BranchName`, with the CI
+  builds of a branch in their own `-ci` group.
 - `GetGroupName( branchName, isCI )` is the same rule from a branch, and it is the overload to look
   a branch up with. The `branchName` is the **version** side of a branch - the empty string for the
   stable line, `"alpha"` to `"zulu"`, `"explo/{name}"` - not the name a repository gives it.
@@ -192,7 +228,7 @@ reflection, no converters, no source generator, and the format is exactly what
 {
   "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
   "World": "CKt",
-  "Version": "1.2.3",
+  "Version": "2026.11.21",
   "IsDeprecated": false,
   "Repositories": [
     {
@@ -235,8 +271,8 @@ short, diffable, and parsed back by `PackageInstance` itself. An ambiguity is th
 needs its anchor and its resolutions, so it is an object whose `"Package"` field carries the resolved
 instance - the same field whatever the anchor, for a consumer that wants only the effective set.
 
-A dependency's version is any **SemVer**: an external package is not bound to CSemVer, unlike the
-profile's own `Version`.
+A dependency's version is any **SemVer**: an external package is not bound to CSemVer. The profile's own
+`Version` is a `TimeVersion`.
 
 The API:
 

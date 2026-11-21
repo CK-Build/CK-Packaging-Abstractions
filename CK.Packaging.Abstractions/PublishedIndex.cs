@@ -20,14 +20,14 @@ namespace CK.Packaging.Abstractions;
 /// </para>
 /// <para>
 /// The grouping is not stored state: a group name is a pure function of the version it holds
-/// (<see cref="GetGroupName(SVersion)"/>), so an index cannot disagree with itself about where a
+/// (<see cref="GetGroupName(TimeVersion)"/>), so an index cannot disagree with itself about where a
 /// version belongs.
 /// </para>
 /// </summary>
 public sealed class PublishedIndex
 {
-    readonly SortedDictionary<string, ImmutableArray<SVersion>> _alive;
-    readonly SortedDictionary<string, ImmutableArray<SVersion>> _deprecated;
+    readonly SortedDictionary<string, ImmutableArray<TimeVersion>> _alive;
+    readonly SortedDictionary<string, ImmutableArray<TimeVersion>> _deprecated;
 
     /// <summary>
     /// The conventional file name of an index: "index.json".
@@ -39,7 +39,7 @@ public sealed class PublishedIndex
     public const string IndexFileName = "index.json";
 
     /// <summary>
-    /// The group name of the stable versions, whose <see cref="SVersion.BranchName"/> is the empty
+    /// The group name of the stable versions, whose <see cref="TimeVersion.BranchName"/> is the empty
     /// string: "(stable)".
     /// <para>
     /// This is deliberately NOT a World's root branch name - that one is the business of whoever models
@@ -55,7 +55,7 @@ public sealed class PublishedIndex
 
     /// <summary>
     /// The group name of the CI builds of the stable versions: "(stable-ci)". They share the
-    /// <see cref="StableGroupName"/> empty <see cref="SVersion.BranchName"/> but never its group.
+    /// <see cref="StableGroupName"/> empty <see cref="TimeVersion.BranchName"/> but never its group.
     /// </summary>
     public const string StableCIGroupName = "(stable-ci)";
 
@@ -82,39 +82,38 @@ public sealed class PublishedIndex
     /// <summary>
     /// Initializes a new index from the profile versions it must contain.
     /// <para>
-    /// The versions are grouped by <see cref="GetGroupName(SVersion)"/> and each group is ordered from
+    /// The versions are grouped by <see cref="GetGroupName(TimeVersion)"/> and each group is ordered from
     /// the latest to the oldest, so an index built from the same versions in a different discovery order
     /// is byte-identical once serialized.
     /// </para>
     /// </summary>
     /// <param name="alive">
-    /// The versions of the profiles that are not deprecated. Each must be a Conformant
-    /// <see cref="SVersion"/> and must appear once across both sets.
+    /// The versions of the profiles that are not deprecated. Each must appear once across both sets.
     /// </param>
     /// <param name="deprecated">
-    /// The versions of the <see cref="PublishedProfile.IsDeprecated"/> profiles. Each must be a
-    /// Conformant <see cref="SVersion"/> and must appear once across both sets.
+    /// The versions of the <see cref="PublishedProfile.IsDeprecated"/> profiles. Each must appear once
+    /// across both sets.
     /// </param>
-    public PublishedIndex( IEnumerable<SVersion> alive, IEnumerable<SVersion> deprecated )
+    public PublishedIndex( IEnumerable<TimeVersion> alive, IEnumerable<TimeVersion> deprecated )
     {
         ArgumentNullException.ThrowIfNull( alive );
         ArgumentNullException.ThrowIfNull( deprecated );
         // A profile version identifies a profile - one file - so it belongs to exactly one of the two
         // sets: this also catches the same version listed twice in one of them.
-        var all = new Dictionary<SVersion, bool>();
+        var all = new Dictionary<TimeVersion, bool>();
         _alive = Group( alive, nameof( alive ), isAlive: true, all );
         _deprecated = Group( deprecated, nameof( deprecated ), isAlive: false, all );
 
-        static SortedDictionary<string, ImmutableArray<SVersion>> Group( IEnumerable<SVersion> versions,
+        static SortedDictionary<string, ImmutableArray<TimeVersion>> Group( IEnumerable<TimeVersion> versions,
                                                                         string name,
                                                                         bool isAlive,
-                                                                        Dictionary<SVersion, bool> all )
+                                                                        Dictionary<TimeVersion, bool> all )
         {
-            var builders = new SortedDictionary<string, List<SVersion>>( StringComparer.Ordinal )
+            var builders = new SortedDictionary<string, List<TimeVersion>>( StringComparer.Ordinal )
             {
                 // Seeded, so a consumer always has the root group to read. Every other group exists
                 // only because a version landed in it.
-                { StableGroupName, new List<SVersion>() }
+                { StableGroupName, new List<TimeVersion>() }
             };
             foreach( var v in versions )
             {
@@ -130,15 +129,14 @@ public sealed class PublishedIndex
                                                         : "either alive or deprecated, not both."),
                                                  name );
                 }
-                // GetGroupName rejects a non Conformant version: this is where that is enforced.
-                var groupName = GetGroupName( v, name );
+                var groupName = GetGroupName( v );
                 if( !builders.TryGetValue( groupName, out var group ) )
                 {
-                    builders.Add( groupName, group = new List<SVersion>() );
+                    builders.Add( groupName, group = new List<TimeVersion>() );
                 }
                 group.Add( v );
             }
-            var result = new SortedDictionary<string, ImmutableArray<SVersion>>( StringComparer.Ordinal );
+            var result = new SortedDictionary<string, ImmutableArray<TimeVersion>>( StringComparer.Ordinal );
             foreach( var (groupName, group) in builders )
             {
                 group.Sort( static ( v1, v2 ) => v2.CompareTo( v1 ) );
@@ -157,8 +155,8 @@ public sealed class PublishedIndex
     public static PublishedIndex Create( IEnumerable<PublishedProfile> profiles )
     {
         ArgumentNullException.ThrowIfNull( profiles );
-        var alive = new List<SVersion>();
-        var deprecated = new List<SVersion>();
+        var alive = new List<TimeVersion>();
+        var deprecated = new List<TimeVersion>();
         foreach( var p in profiles )
         {
             if( p is null )
@@ -177,7 +175,7 @@ public sealed class PublishedIndex
     /// The <see cref="StableGroupName"/> group is always present (possibly empty).
     /// </para>
     /// </summary>
-    public IReadOnlyDictionary<string, ImmutableArray<SVersion>> Alive => _alive;
+    public IReadOnlyDictionary<string, ImmutableArray<TimeVersion>> Alive => _alive;
 
     /// <summary>
     /// Gets the versions of the <see cref="PublishedProfile.IsDeprecated"/> profiles, by group name in
@@ -186,14 +184,14 @@ public sealed class PublishedIndex
     /// The <see cref="StableGroupName"/> group is always present (possibly empty).
     /// </para>
     /// </summary>
-    public IReadOnlyDictionary<string, ImmutableArray<SVersion>> Deprecated => _deprecated;
+    public IReadOnlyDictionary<string, ImmutableArray<TimeVersion>> Deprecated => _deprecated;
 
     /// <summary>
     /// Gets whether this index holds no version at all.
     /// </summary>
     public bool IsEmpty => IsEmptySet( _alive ) && IsEmptySet( _deprecated );
 
-    static bool IsEmptySet( SortedDictionary<string, ImmutableArray<SVersion>> set )
+    static bool IsEmptySet( SortedDictionary<string, ImmutableArray<TimeVersion>> set )
     {
         foreach( var group in set.Values )
         {
@@ -206,9 +204,9 @@ public sealed class PublishedIndex
     /// Gets the <see cref="Alive"/> versions of a group, the latest first. An absent group is an empty
     /// one: a group exists only because a version landed in it.
     /// </summary>
-    /// <param name="groupName">The group name (see <see cref="GetGroupName(SVersion)"/>).</param>
+    /// <param name="groupName">The group name (see <see cref="GetGroupName(TimeVersion)"/>).</param>
     /// <returns>The versions, the latest first. Empty when the group holds none.</returns>
-    public ImmutableArray<SVersion> GetAlive( string groupName )
+    public ImmutableArray<TimeVersion> GetAlive( string groupName )
     {
         ArgumentNullException.ThrowIfNull( groupName );
         return _alive.TryGetValue( groupName, out var versions ) ? versions : [];
@@ -218,35 +216,25 @@ public sealed class PublishedIndex
     /// Gets the <see cref="Deprecated"/> versions of a group, the latest first. An absent group is an
     /// empty one: a group exists only because a version landed in it.
     /// </summary>
-    /// <param name="groupName">The group name (see <see cref="GetGroupName(SVersion)"/>).</param>
+    /// <param name="groupName">The group name (see <see cref="GetGroupName(TimeVersion)"/>).</param>
     /// <returns>The versions, the latest first. Empty when the group holds none.</returns>
-    public ImmutableArray<SVersion> GetDeprecated( string groupName )
+    public ImmutableArray<TimeVersion> GetDeprecated( string groupName )
     {
         ArgumentNullException.ThrowIfNull( groupName );
         return _deprecated.TryGetValue( groupName, out var versions ) ? versions : [];
     }
 
     /// <summary>
-    /// Gets the group name a version belongs to: its <see cref="SVersion.BranchName"/>, the stable
+    /// Gets the group name a version belongs to: its <see cref="TimeVersion.BranchName"/>, the stable
     /// group names standing for the empty one, and the CI builds of a branch in their own
     /// <see cref="CIGroupSuffix"/> group.
     /// </summary>
-    /// <param name="version">The version. Must be a Conformant <see cref="SVersion"/>.</param>
+    /// <param name="version">The version.</param>
     /// <returns>The group name.</returns>
-    public static string GetGroupName( SVersion version )
+    public static string GetGroupName( TimeVersion version )
     {
         ArgumentNullException.ThrowIfNull( version );
-        return GetGroupName( version, nameof( version ) );
-    }
-
-    static string GetGroupName( SVersion version, string name )
-    {
-        var branchName = version.BranchName;
-        if( branchName == null )
-        {
-            throw new ArgumentException( $"Version '{version}' must be a Conformant SVersion.", name );
-        }
-        return GetGroupName( branchName, version.IsCI );
+        return GetGroupName( version.BranchName, version.IsCI );
     }
 
     /// <summary>
@@ -260,7 +248,7 @@ public sealed class PublishedIndex
     /// </para>
     /// </summary>
     /// <param name="branchName">
-    /// The <see cref="SVersion.BranchName"/> of the branch: the empty string for the stable line.
+    /// The <see cref="TimeVersion.BranchName"/> of the branch: the empty string for the stable line.
     /// </param>
     /// <param name="isCI">True to get the group of the branch's CI builds instead of its regular ones.</param>
     /// <returns>The group name.</returns>
@@ -278,7 +266,7 @@ public sealed class PublishedIndex
     /// <returns>A readable string.</returns>
     public override string ToString() => $"{Count( _alive )} alive, {Count( _deprecated )} deprecated";
 
-    static int Count( SortedDictionary<string, ImmutableArray<SVersion>> set )
+    static int Count( SortedDictionary<string, ImmutableArray<TimeVersion>> set )
     {
         int c = 0;
         foreach( var group in set.Values )
@@ -300,7 +288,7 @@ public sealed class PublishedIndex
         WriteSet( w, "Deprecated", _deprecated );
         w.WriteEndObject();
 
-        static void WriteSet( Utf8JsonWriter w, string setName, SortedDictionary<string, ImmutableArray<SVersion>> set )
+        static void WriteSet( Utf8JsonWriter w, string setName, SortedDictionary<string, ImmutableArray<TimeVersion>> set )
         {
             w.WriteStartObject( setName );
             foreach( var (groupName, versions) in set )
@@ -379,8 +367,8 @@ public sealed class PublishedIndex
     public static PublishedIndex Read( ref Utf8JsonReader r )
     {
         JsonHelper.EnsureStartObject( ref r, nameof( PublishedIndex ) );
-        List<SVersion>? alive = null;
-        List<SVersion>? deprecated = null;
+        List<TimeVersion>? alive = null;
+        List<TimeVersion>? deprecated = null;
         while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
         {
             var name = JsonHelper.StartProperty( ref r );
@@ -403,18 +391,18 @@ public sealed class PublishedIndex
                 ? Empty
                 : new PublishedIndex( alive ?? [], deprecated ?? [] );
 
-        static List<SVersion> ReadSet( ref Utf8JsonReader r, string setName )
+        static List<TimeVersion> ReadSet( ref Utf8JsonReader r, string setName )
         {
             JsonHelper.EnsureStartObject( ref r, setName );
-            var versions = new List<SVersion>();
+            var versions = new List<TimeVersion>();
             while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
             {
                 var groupName = JsonHelper.StartProperty( ref r );
                 JsonHelper.EnsureStartArray( ref r, groupName );
                 while( r.Read() && r.TokenType != JsonTokenType.EndArray )
                 {
-                    var v = JsonHelper.GetVersion( ref r, groupName );
-                    var expected = GetGroupName( v, groupName );
+                    var v = JsonHelper.GetTimeVersion( ref r, groupName );
+                    var expected = GetGroupName( v );
                     if( expected != groupName )
                     {
                         throw new JsonException( $"Version '{v}' of the '{setName}' set is listed in the "

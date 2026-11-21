@@ -16,11 +16,11 @@ public class ProfileTests
     {
         var p = TestModel.SampleProfile();
 
-        p.Version.ShouldBe( TestModel.V( "1.2.3" ) );
+        p.Version.ShouldBe( TestModel.TV( "2026.11.21" ) );
         p.World.ShouldBe( TestModel.World );
         p.StackUrl.ShouldBe( TestModel.StackUrl );
         p.IsDeprecated.ShouldBeFalse();
-        p.ToString().ShouldBe( "CKt/v1.2.3" );
+        p.ToString().ShouldBe( "CKt/v2026.11.21" );
 
         p.ProducedPackages.Count.ShouldBe( 3 );
         p.ProducedPackages["CK.One"].Version.ShouldBe( TestModel.V( "1.2.3" ) );
@@ -43,23 +43,13 @@ public class ProfileTests
     }
 
     [Test]
-    public void profile_version_must_be_a_conformant_SVersion()
-    {
-        var notCS = SVersion.Parse( "1.0.0-not-a-conformant-prerelease" );
-        notCS.VersionKind.ShouldBe( CSVersionKind.None );
-
-        Should.Throw<ArgumentException>( () => new PublishedProfile( TestModel.StackUrl, TestModel.World, notCS, [] ) )
-              .Message.ShouldStartWith( "Version '1.0.0-not-a-conformant-prerelease' must be a Conformant SVersion." );
-    }
-
-    [Test]
     public void profile_stack_url_must_be_absolute()
     {
         var relative = new Uri( "CKt-Stack", UriKind.Relative );
 
         Should.Throw<ArgumentException>( () => new PublishedProfile( relative,
                                                                      TestModel.World,
-                                                                     TestModel.V( "1.0.0" ),
+                                                                     TestModel.TV( TestModel.ProfileVersion ),
                                                                      [] ) )
               .Message.ShouldStartWith( "Stack url must be absolute: 'CKt-Stack'." );
     }
@@ -69,7 +59,7 @@ public class ProfileTests
     {
         Should.Throw<ArgumentException>( () => new PublishedProfile( TestModel.StackUrl,
                                                                      TestModel.World,
-                                                                     TestModel.V( "1.0.0" ),
+                                                                     TestModel.TV( TestModel.ProfileVersion ),
                                                                      default ) )
               .Message.ShouldStartWith( "Repositories must be initialized." );
     }
@@ -77,7 +67,7 @@ public class ProfileTests
     [Test]
     public void a_package_identifier_cannot_appear_in_two_repositories()
     {
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Repo( "One", 1, "CK.Shared@1.0.0" ),
                                                                   TestModel.Repo( "Two", 2, "CK.Shared@2.0.0" ) ) )
               .Message.ShouldStartWith( "Package 'CK.Shared' appears more than once in the profile: "
@@ -95,7 +85,7 @@ public class ProfileTests
     [Test]
     public void two_repositories_cannot_share_their_url()
     {
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Repo( "One", 1, "CK.One@1.0.0" ),
                                                                   TestModel.Repo( "One", 2, "CK.Two@1.0.0" ) ) )
               .Message.ShouldStartWith( "Duplicate repository url 'https://github.com/Signature-Code/CKt-One'." );
@@ -104,7 +94,7 @@ public class ProfileTests
     [Test]
     public void two_repositories_cannot_share_their_identifier()
     {
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Repo( "One", 1, "CK.One@1.0.0" ),
                                                                   TestModel.Repo( "Two", 1, "CK.Two@1.0.0" ) ) )
               .Message.ShouldStartWith( "Duplicate repository identifier 'AQAAAAAAAAA' "
@@ -167,7 +157,7 @@ public class ProfileTests
     [Test]
     public void a_profile_carries_no_dependency_by_default()
     {
-        var p = TestModel.Profile( "1.0.0", TestModel.Repo( "One", 1, "CK.One@1.0.0" ) );
+        var p = TestModel.Profile( TestModel.ProfileVersion, TestModel.Repo( "One", 1, "CK.One@1.0.0" ) );
 
         p.DirectDependencies.ShouldBeEmpty();
         p.TransitiveDependencies.ShouldBeSameAs( TransitiveDependencies.Empty );
@@ -220,7 +210,7 @@ public class ProfileTests
     [Test]
     public void a_direct_dependency_identifier_cannot_appear_twice()
     {
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Packages( "CK.Ext@1.0.0", "ck.EXT@2.0.0" ),
                                                                   null ) )
               .Message.ShouldStartWith( "Direct dependency 'ck.EXT' appears more than once in the profile: "
@@ -230,7 +220,7 @@ public class ProfileTests
     [Test]
     public void a_direct_dependency_cannot_be_produced_by_the_profile()
     {
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Packages( "CK.One@0.9.0" ),
                                                                   null,
                                                                   TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ) )
@@ -242,7 +232,7 @@ public class ProfileTests
     [Test]
     public void a_regular_transitive_dependency_cannot_be_produced_nor_direct()
     {
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   [],
                                                                   new TransitiveDependencies( TestModel.Packages( "CK.One@0.9.0" ), [] ),
                                                                   TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ) )
@@ -250,7 +240,7 @@ public class ProfileTests
                                         + "('CK.One@1.0.0'): a produced identifier can only appear in the closure "
                                         + "as an ambiguity anchored on ProducedPackages." );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Packages( "NUnit@4.2.2" ),
                                                                   new TransitiveDependencies( TestModel.Packages( "nunit@4.0.0" ), [] ) ) )
               .Message.ShouldStartWith( "Regular transitive dependency 'nunit@4.0.0' is a direct dependency "
@@ -296,13 +286,13 @@ public class ProfileTests
                                      VersionSource.DirectDependencies,
                                      TestModel.Res( "5.0.0", 1 ) );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   [],
                                                                   new TransitiveDependencies( [], [a] ) ) )
               .Message.ShouldStartWith( "Ambiguous dependency 'NUnit@4.0.0' is resolved from DirectDependencies but "
                                         + "no entry of DirectDependencies has this identifier." );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Packages( "NUnit@4.2.2" ),
                                                                   new TransitiveDependencies( [], [a] ) ) )
               .Message.ShouldStartWith( "Ambiguous dependency 'NUnit@4.0.0' is resolved from DirectDependencies but "
@@ -316,13 +306,13 @@ public class ProfileTests
                                      VersionSource.ProducedPackages,
                                      TestModel.Res( "5.0.0", 1 ) );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   [],
                                                                   new TransitiveDependencies( [], [a] ) ) )
               .Message.ShouldStartWith( "Ambiguous dependency 'CK.One@0.9.0' is resolved from ProducedPackages but "
                                         + "no entry of ProducedPackages has this identifier." );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   [],
                                                                   new TransitiveDependencies( [], [a] ),
                                                                   TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ) )
@@ -338,14 +328,14 @@ public class ProfileTests
                                      TestModel.Res( "2.0.0", 1 ),
                                      TestModel.Res( "1.0.0", 1 ) );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Packages( "CK.One@2.0.0" ),
                                                                   new TransitiveDependencies( [], [a] ) ) )
               .Message.ShouldStartWith( "Ambiguous dependency 'CK.One@2.0.0' is resolved from its own resolutions "
                                         + "but 'CK.One@2.0.0' is a direct dependency: it must be resolved from "
                                         + "DirectDependencies." );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "2.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   [],
                                                                   new TransitiveDependencies( [], [a] ),
                                                                   TestModel.Repo( "One", 1, "CK.One@2.0.0" ) ) )
@@ -363,7 +353,7 @@ public class ProfileTests
                                      VersionSource.DirectDependencies,
                                      TestModel.Res( "5.0.0", 3712 ) );
 
-        Should.Throw<ArgumentException>( () => TestModel.Profile( "1.0.0",
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
                                                                   TestModel.Packages( "NUnit@4.2.2" ),
                                                                   new TransitiveDependencies( [], [a] ),
                                                                   TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ) )
@@ -456,8 +446,8 @@ public class ProfileTests
     [Test]
     public void a_dependency_version_is_any_SemVer()
     {
-        // An external package is not bound to CSemVer, unlike the profile's own version.
-        var p = TestModel.Profile( "1.0.0",
+        // An external package is not bound to CSemVer: any SemVer is fine.
+        var p = TestModel.Profile( TestModel.ProfileVersion,
                                    TestModel.Packages( "Some.Lib@1.0.0-beta2" ),
                                    new TransitiveDependencies( TestModel.Packages( "Other.Lib@2.0.0-rc.2.23479.6" ),
                                                                [] ) );
@@ -476,7 +466,7 @@ public class ProfileTests
             {
                 "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
                 "World": "CKt",
-                "Version": "1.2.3",
+                "Version": "2026.11.21",
                 "Repositories": []
             }
             """;
@@ -490,7 +480,7 @@ public class ProfileTests
             {
                 "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
                 "World": "CKt",
-                "Version": "1.2.3",
+                "Version": "2026.11.21",
                 "Repositories": [],
                 "DirectDependencies": [],
                 "TransitiveDependencies": { "Regular": [ "Ghost.Package@0.1.0" ] }
@@ -510,7 +500,7 @@ public class ProfileTests
         var p = TestModel.SampleProfile();
 
         p.ToJsonString( indented: false ).ShouldBe( """
-            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"1.2.3","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}],"DirectDependencies":["NUnit@4.2.2","System.Text.Json@9.0.0"],"TransitiveDependencies":{"Regular":["System.IO.Pipelines@9.0.0"],"Ambiguous":[{"Package":"CK.Two@1.2.3","ResolvedFrom":"ProducedPackages","Resolutions":[{"Version":"99.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Encodings.Web@9.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"9.0.0","Repositories":["AQAAAAAAAAA","AgAAAAAAAAA"]},{"Version":"8.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Json@9.0.0","ResolvedFrom":"DirectDependencies","Resolutions":[{"Version":"10.0.0","Repositories":["AgAAAAAAAAA"]}]}]}}
+            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"2026.11.21","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}],"DirectDependencies":["NUnit@4.2.2","System.Text.Json@9.0.0"],"TransitiveDependencies":{"Regular":["System.IO.Pipelines@9.0.0"],"Ambiguous":[{"Package":"CK.Two@1.2.3","ResolvedFrom":"ProducedPackages","Resolutions":[{"Version":"99.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Encodings.Web@9.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"9.0.0","Repositories":["AQAAAAAAAAA","AgAAAAAAAAA"]},{"Version":"8.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Json@9.0.0","ResolvedFrom":"DirectDependencies","Resolutions":[{"Version":"10.0.0","Repositories":["AgAAAAAAAAA"]}]}]}}
             """ );
     }
 
@@ -523,11 +513,11 @@ public class ProfileTests
         json.ShouldStartWith( "{\r\n  \"StackUrl\": \"https://github.com/Signature-Code/CKt-Stack\",\r\n" );
     }
 
-    [TestCase( "1.2.3" )]
-    [TestCase( "1.2.3--ci.5" )]
-    [TestCase( "1.3.0-alpha" )]
-    [TestCase( "1.3.0-zulu.4.ci.12" )]
-    [TestCase( "0.0.0-0.some-explo" )]
+    [TestCase( "2026.11.21" )]
+    [TestCase( "2026.11.21.1--ci.5" )]
+    [TestCase( "2026.11.21-alpha" )]
+    [TestCase( "2026.1.2.3-zulu.0.ci.12" )]
+    [TestCase( "2026.11.21-0.some-explo" )]
     public void json_round_trip( string version )
     {
         var p = TestModel.SampleProfile( version ).Deprecate();
@@ -557,7 +547,7 @@ public class ProfileTests
                 "Unknown": { "Nested": [1,2,{"Deep":null}] },
                 "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
                 "World": "CKt",
-                "Version": "1.2.3",
+                "Version": "2026.11.21",
                 "Repositories": [
                     {
                         "Url": "https://github.com/Signature-Code/CKt-One",
@@ -584,7 +574,7 @@ public class ProfileTests
             """;
         var p = PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) );
 
-        p.Version.ShouldBe( TestModel.V( "1.2.3" ) );
+        p.Version.ShouldBe( TestModel.TV( "2026.11.21" ) );
         // IsDeprecated defaults to false when the property is missing.
         p.IsDeprecated.ShouldBeFalse();
         p.ProducedPackages.Keys.ShouldBe( new[] { "CK.One" } );
@@ -594,62 +584,62 @@ public class ProfileTests
         a.Resolutions[0].Repositories.Select( x => x.ToString() ).ShouldBe( new[] { "AQAAAAAAAAA" } );
     }
 
-    [TestCase( """{"World":"CKt","Version":"1.2.3","Repositories":[]}""",
+    [TestCase( """{"World":"CKt","Version":"2026.11.21","Repositories":[]}""",
                "Missing 'StackUrl' property in 'PublishedProfile'." )]
-    [TestCase( """{"StackUrl":"https://x/y","Version":"1.2.3","Repositories":[]}""",
+    [TestCase( """{"StackUrl":"https://x/y","Version":"2026.11.21","Repositories":[]}""",
                "Missing 'World' property in 'PublishedProfile'." )]
     [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Repositories":[]}""",
                "Missing 'Version' property in 'PublishedProfile'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3"}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21"}""",
                "Missing 'Repositories' property in 'PublishedProfile'." )]
-    [TestCase( """{"StackUrl":"not an url","World":"CKt","Version":"1.2.3","Repositories":[]}""",
+    [TestCase( """{"StackUrl":"not an url","World":"CKt","Version":"2026.11.21","Repositories":[]}""",
                "Expected an absolute url for 'StackUrl', got 'not an url'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"no way!","Version":"1.2.3","Repositories":[]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"no way!","Version":"2026.11.21","Repositories":[]}""",
                "Expected a world full name for 'World', got 'no way!'." )]
     [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.0.0-nope","Repositories":[]}""",
-               "Expected a Conformant SVersion for 'Version', got '1.0.0-nope'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","IsDeprecated":"yes","Repositories":[]}""",
+               "Expected a TimeVersion for 'Version', got '1.0.0-nope'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","IsDeprecated":"yes","Repositories":[]}""",
                "Expected a boolean for 'IsDeprecated', got 'String'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":{}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":{}}""",
                "Expected an array for 'Repositories', got 'StartObject'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[3]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[3]}""",
                "Expected 'Repository' object start, got 'Number'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[{"Id":"AQAAAAAAAAA","Packages":[]}]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[{"Id":"AQAAAAAAAAA","Packages":[]}]}""",
                "Missing 'Url' property in 'Repository'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[{"Url":"https://x/z","Packages":[]}]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[{"Url":"https://x/z","Packages":[]}]}""",
                "Missing 'Id' property in 'Repository'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[{"Url":"https://x/z","Id":"AAAAAAAAAAA","Packages":[]}]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[{"Url":"https://x/z","Id":"AAAAAAAAAAA","Packages":[]}]}""",
                "Expected a valid RandomId for 'Id', got 'AAAAAAAAAAA'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[{"Url":"https://x/z","Id":"AQAAAAAAAAA"}]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[{"Url":"https://x/z","Id":"AQAAAAAAAAA"}]}""",
                "Missing 'Packages' property in 'Repository'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[{"Url":"https://x/z","Id":"AQAAAAAAAAA","Packages":["CK.One"]}]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[{"Url":"https://x/z","Id":"AQAAAAAAAAA","Packages":["CK.One"]}]}""",
                "Expected a \"packageId@version\" string in 'Packages', got 'CK.One'." )]
     [TestCase( """[]""", "Expected 'PublishedProfile' object start, got 'StartArray'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"DirectDependencies":{}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"DirectDependencies":{}}""",
                "Expected an array for 'DirectDependencies', got 'StartObject'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"DirectDependencies":["CK.One"]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"DirectDependencies":["CK.One"]}""",
                "Expected a \"packageId@version\" string in 'DirectDependencies', got 'CK.One'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":[]}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":[]}""",
                "Expected 'TransitiveDependencies' object start, got 'StartArray'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Regular":["CK.One"]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Regular":["CK.One"]}}""",
                "Expected a \"packageId@version\" string in 'Regular', got 'CK.One'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"ResolvedFrom":"TransitiveDependencies","Resolutions":[]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"ResolvedFrom":"TransitiveDependencies","Resolutions":[]}]}}""",
                "Missing 'Package' property in 'AmbiguousDependency'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","Resolutions":[]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","Resolutions":[]}]}}""",
                "Missing 'ResolvedFrom' property in 'AmbiguousDependency'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"Nope","Resolutions":[]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"Nope","Resolutions":[]}]}}""",
                "Expected \"TransitiveDependencies\", \"DirectDependencies\" or \"ProducedPackages\" for 'ResolvedFrom', got 'Nope'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies"}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies"}]}}""",
                "Missing 'Resolutions' property in 'AmbiguousDependency'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Repositories":["AQAAAAAAAAA"]}]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Repositories":["AQAAAAAAAAA"]}]}]}}""",
                "Missing 'Version' property in 'VersionResolution'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"1.0.0"}]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"1.0.0"}]}]}}""",
                "Missing 'Repositories' property in 'VersionResolution'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"nope","Repositories":["AQAAAAAAAAA"]}]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"nope","Repositories":["AQAAAAAAAAA"]}]}]}}""",
                "Expected a SemVer version for 'Version', got 'nope'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"1.0.0","Repositories":[3]}]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"1.0.0","Repositories":[3]}]}]}}""",
                "Expected a string for 'Repositories', got 'Number'." )]
-    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"1.0.0","Repositories":["nope"]}]}]}}""",
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"1.0.0","Repositories":["nope"]}]}]}}""",
                "Expected a valid RandomId for 'Repositories', got 'nope'." )]
     public void json_errors_are_explicit( string json, string message )
     {
@@ -660,7 +650,7 @@ public class ProfileTests
     [Test]
     public void trailing_data_is_a_json_error()
     {
-        var json = """{"StackUrl":"https://x/y","World":"CKt","Version":"1.2.3","Repositories":[]} 3""";
+        var json = """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[]} 3""";
 
         Should.Throw<JsonException>( () => PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) ) );
     }
@@ -672,7 +662,7 @@ public class ProfileTests
             {
                 "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
                 "World": "CKt",
-                "Version": "1.2.3",
+                "Version": "2026.11.21",
                 "Repositories": [
                     { "Url": "https://x/One", "Id": "AQAAAAAAAAA", "Packages": [ "CK.One@1.2.3" ] },
                     { "Url": "https://x/Two", "Id": "AgAAAAAAAAA", "Packages": [ "CK.One@1.2.4" ] }
@@ -688,7 +678,7 @@ public class ProfileTests
             {
                 "StackUrl": "https://github.com/Signature-Code/CKt-Stack",
                 "World": "CKt",
-                "Version": "1.2.3",
+                "Version": "2026.11.21",
                 "Repositories": [
                     { "Url": "https://x/One", "Id": "AQAAAAAAAAA", "Packages": [ "CK.One@1.2.3" ] }
                 ],

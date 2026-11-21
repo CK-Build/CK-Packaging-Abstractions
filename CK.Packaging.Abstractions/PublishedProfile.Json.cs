@@ -101,7 +101,7 @@ public sealed partial class PublishedProfile
         JsonHelper.EnsureStartObject( ref r, nameof( PublishedProfile ) );
         Uri? stackUrl = null;
         WorldName? world = null;
-        SVersion? version = null;
+        TimeVersion? version = null;
         bool isDeprecated = false;
         ImmutableArray<Repository>.Builder? repositories = null;
         ImmutableArray<PackageInstance>.Builder? directDependencies = null;
@@ -118,7 +118,7 @@ public sealed partial class PublishedProfile
                     world = JsonHelper.GetWorldName( ref r, name );
                     break;
                 case "Version":
-                    version = JsonHelper.GetVersion( ref r, name );
+                    version = JsonHelper.GetTimeVersion( ref r, name );
                     break;
                 case "IsDeprecated":
                     isDeprecated = JsonHelper.GetBoolean( ref r, name );

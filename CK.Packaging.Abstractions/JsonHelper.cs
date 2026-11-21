@@ -159,22 +159,23 @@ static class JsonHelper
     }
 
     /// <summary>
-    /// Gets a Conformant SVersion.
+    /// Gets a <see cref="TimeVersion"/>. The "Year.DayOfYear.Number" legacy form is accepted (and converted):
+    /// the profiles and indexes written before the TimeVersion still read.
     /// </summary>
     /// <param name="r">The reader.</param>
     /// <param name="propertyName">The property name (used by the error message).</param>
     /// <returns>The version.</returns>
-    internal static SVersion GetVersion( ref Utf8JsonReader r, string propertyName )
+    internal static TimeVersion GetTimeVersion( ref Utf8JsonReader r, string propertyName )
     {
         var s = GetString( ref r, propertyName );
-        return SVersion.TryParse( s, out var v, mustBeCSVersion: true )
+        return TimeVersion.TryParse( s, out var v, acceptDayOfYear: true )
                 ? v
-                : throw new JsonException( $"Expected a Conformant SVersion for '{propertyName}', got '{s}'." );
+                : throw new JsonException( $"Expected a TimeVersion for '{propertyName}', got '{s}'." );
     }
 
     /// <summary>
-    /// Gets a SemVer version. Unlike <see cref="GetVersion"/>, no CSemVer conformance is required: an
-    /// external package's version is any SemVer.
+    /// Gets a SemVer version. Unlike <see cref="GetTimeVersion"/>, any SemVer is accepted: an external
+    /// package's version is any SemVer.
     /// </summary>
     /// <param name="r">The reader.</param>
     /// <param name="propertyName">The property name (used by the error message).</param>

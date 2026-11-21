@@ -28,7 +28,7 @@ public sealed partial class PublishedProfile
 {
     readonly Uri _stackUrl;
     readonly WorldName _world;
-    readonly SVersion _version;
+    readonly TimeVersion _version;
     readonly ImmutableArray<Repository> _repositories;
     readonly Dictionary<string, PackageInstance> _producedPackages;
     readonly ImmutableArray<PackageInstance> _directDependencies;
@@ -47,7 +47,7 @@ public sealed partial class PublishedProfile
     /// </summary>
     /// <param name="stackUrl">The stack repository url. Must be absolute.</param>
     /// <param name="world">The world name.</param>
-    /// <param name="version">The profile version. Must be a Conformant SVersion.</param>
+    /// <param name="version">The profile version.</param>
     /// <param name="repositories">
     /// The repositories. Must not be default, must not contain the same <see cref="RepositoryKey.Url"/>
     /// or <see cref="RepositoryKey.Id"/> twice and no package identifier can appear in more than one of them.
@@ -69,7 +69,7 @@ public sealed partial class PublishedProfile
     /// <param name="isDeprecated">Whether this profile is deprecated.</param>
     public PublishedProfile( Uri stackUrl,
                              WorldName world,
-                             SVersion version,
+                             TimeVersion version,
                              ImmutableArray<Repository> repositories,
                              ImmutableArray<PackageInstance> directDependencies = default,
                              TransitiveDependencies? transitiveDependencies = null,
@@ -81,10 +81,6 @@ public sealed partial class PublishedProfile
         if( !stackUrl.IsAbsoluteUri )
         {
             throw new ArgumentException( $"Stack url must be absolute: '{stackUrl}'.", nameof( stackUrl ) );
-        }
-        if( version.VersionKind == CSVersionKind.None )
-        {
-            throw new ArgumentException( $"Version '{version}' must be a Conformant SVersion.", nameof( version ) );
         }
         if( repositories.IsDefault )
         {
@@ -300,10 +296,9 @@ public sealed partial class PublishedProfile
     public bool IsDeprecated => _isDeprecated;
 
     /// <summary>
-    /// Gets the version. <see cref="SVersion.VersionKind"/> is necessarily
-    /// not <see cref="CSVersionKind.None"/>: this is a "Conformant SVersion".
+    /// Gets the version: the publication's own, not a package version.
     /// </summary>
-    public SVersion Version => _version;
+    public TimeVersion Version => _version;
 
     /// <summary>
     /// Gets the repositories, ordered by their <see cref="RepositoryKey.Url"/>.
@@ -362,24 +357,44 @@ public sealed partial class PublishedProfile
     /// <summary>
     /// Gets a path that identifies or locates a profile representation of a version.
     /// </summary>
-    /// <param name="version">The version. Must be a Conformant SVersion.</param>
+    /// <param name="version">The version.</param>
     /// <param name="prefix">Optional prefix. Typically ends with <paramref name="directorySeparator"/>.</param>
     /// <param name="suffix">Optional suffix. Typically an extension (".json").</param>
     /// <param name="directorySeparator">Directory separator to use.</param>
     /// <returns>The associated path.</returns>
-    public static string GetProfilePath( SVersion version, ReadOnlySpan<char> prefix = default, ReadOnlySpan<char> suffix = default, char directorySeparator = '/' )
+    public static string GetProfilePath( TimeVersion version, ReadOnlySpan<char> prefix = default, ReadOnlySpan<char> suffix = default, char directorySeparator = '/' )
     {
         ArgumentNullException.ThrowIfNull( version );
         var branchName = version.BranchName;
-        if( branchName == null )
-        {
-            throw new ArgumentException( $"Version '{version}' must be a Conformant SVersion.", nameof( version ) );
-        }
         // BranchName is the empty string for stable versions (and their CI builds) and can
         // contain a '/' for exploratory versions ("explo/{name}").
         return branchName.Length == 0
                 ? $"{prefix}v{version}{suffix}"
                 : $"{prefix}{branchName.Replace( '/', directorySeparator )}{directorySeparator}v{version}{suffix}";
+    }
+
+    /// <summary>
+    /// Gets the path of a profile written before the <see cref="TimeVersion"/>: its file is named after the
+    /// "Year.DayOfYear.Number" legacy form of its version (2026.11.21.1 was 2026.325.1), in the same branch
+    /// folder as <see cref="GetProfilePath"/>.
+    /// <para>
+    /// A reader of an index that has been written before the <see cref="TimeVersion"/> (its versions are
+    /// converted, see <see cref="SVersionTimeVersionExtensions.AsTimeVersion"/>) can find such a profile here.
+    /// </para>
+    /// </summary>
+    /// <param name="version">The version.</param>
+    /// <param name="prefix">Optional prefix. Typically ends with <paramref name="directorySeparator"/>.</param>
+    /// <param name="suffix">Optional suffix. Typically an extension (".json").</param>
+    /// <param name="directorySeparator">Directory separator to use.</param>
+    /// <returns>The associated legacy path.</returns>
+    public static string GetLegacyProfilePath( TimeVersion version, ReadOnlySpan<char> prefix = default, ReadOnlySpan<char> suffix = default, char directorySeparator = '/' )
+    {
+        ArgumentNullException.ThrowIfNull( version );
+        var legacy = SVersion.Create( version.Year, version.Date.DayOfYear, version.ClashNumber, version.ToSVersion().Prerelease );
+        var branchName = version.BranchName;
+        return branchName.Length == 0
+                ? $"{prefix}v{legacy}{suffix}"
+                : $"{prefix}{branchName.Replace( '/', directorySeparator )}{directorySeparator}v{legacy}{suffix}";
     }
 
 }

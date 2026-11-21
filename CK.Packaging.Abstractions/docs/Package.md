@@ -1,6 +1,7 @@
 Defines a Profile as a coherent set of package instances.
 
-A `PublishedProfile` is the immutable set of packages a CKli World has published under one version:
+A `PublishedProfile` is the immutable set of packages a CKli World has published under one `TimeVersion`
+(the day of the publication and a clash number, plus the branch and CI build of what was published):
 its `Repositories` hold the `PackageInstance` they produced, indexed by `ProducedPackages`, and the
 profile carries at most one version per package identifier. It can also describe what those
 repositories consume: the `DirectDependencies` they reference and the `TransitiveDependencies` a

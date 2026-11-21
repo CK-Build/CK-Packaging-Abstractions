@@ -47,9 +47,19 @@ static class TestModel
     }
 
     /// <summary>
-    /// Parses a Conformant SVersion.
+    /// Parses a Conformant SVersion (a package version).
     /// </summary>
     public static SVersion V( string version ) => SVersion.Parse( version, mustBeCSVersion: true );
+
+    /// <summary>
+    /// The default profile version.
+    /// </summary>
+    public const string ProfileVersion = "2026.11.21";
+
+    /// <summary>
+    /// Parses a <see cref="TimeVersion"/> (a profile version).
+    /// </summary>
+    public static TimeVersion TV( string version ) => TimeVersion.Parse( version );
 
     /// <summary>
     /// Creates a <see cref="VersionResolution"/> from the numerical identifiers of the repositories
@@ -77,7 +87,7 @@ static class TestModel
     /// </summary>
     public static PublishedProfile Profile( string version, params Repository[] repositories )
     {
-        return new PublishedProfile( StackUrl, World, V( version ), [.. repositories] );
+        return new PublishedProfile( StackUrl, World, TV( version ), [.. repositories] );
     }
 
     /// <summary>
@@ -90,7 +100,7 @@ static class TestModel
     {
         return new PublishedProfile( StackUrl,
                                      World,
-                                     V( version ),
+                                     TV( version ),
                                      [.. repositories],
                                      directDependencies,
                                      transitiveDependencies );
@@ -105,8 +115,8 @@ static class TestModel
     /// <summary>
     /// The reference transitive dependencies: one regular dependency and one ambiguity of each
     /// <see cref="VersionSource"/>. The repositories they name are the ones of <see cref="SampleProfile"/>
-    /// (1 is "One" and 2 is "Two") and the <paramref name="version"/> is the profile's one: it is what the
-    /// <see cref="VersionSource.ProducedPackages"/> ambiguity is anchored on.
+    /// (1 is "One" and 2 is "Two") and the <paramref name="version"/> is the one of the produced packages:
+    /// it is what the <see cref="VersionSource.ProducedPackages"/> ambiguity is anchored on.
     /// </summary>
     public static TransitiveDependencies SampleTransitiveDependencies( string version = "1.2.3" )
     {
@@ -137,12 +147,14 @@ static class TestModel
     /// <see cref="SampleTransitiveDependencies"/>. The repositories, the packages and the
     /// dependencies are deliberately not ordered.
     /// </summary>
-    public static PublishedProfile SampleProfile( string version = "1.2.3" )
+    /// <param name="version">The profile version.</param>
+    /// <param name="packageVersion">The version of the produced packages.</param>
+    public static PublishedProfile SampleProfile( string version = ProfileVersion, string packageVersion = "1.2.3" )
     {
         return Profile( version,
                         SampleDirectDependencies,
-                        SampleTransitiveDependencies( version ),
-                        Repo( "Two", 2, $"CK.Two@{version}" ),
-                        Repo( "One", 1, $"CK.One.Sub@{version}", $"CK.One@{version}" ) );
+                        SampleTransitiveDependencies( packageVersion ),
+                        Repo( "Two", 2, $"CK.Two@{packageVersion}" ),
+                        Repo( "One", 1, $"CK.One.Sub@{packageVersion}", $"CK.One@{packageVersion}" ) );
     }
 }
