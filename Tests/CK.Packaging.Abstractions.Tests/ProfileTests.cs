@@ -474,6 +474,8 @@ public class ProfileTests
 
         p.DirectDependencies.ShouldBeEmpty();
         p.TransitiveDependencies.ShouldBeSameAs( TransitiveDependencies.Empty );
+        // The feeds too: absent means "unknown".
+        p.Feeds.ShouldBeEmpty();
 
         // Same for the 2 lists of an existing TransitiveDependencies object.
         var partial = """
@@ -494,13 +496,67 @@ public class ProfileTests
 
     #endregion
 
+    #region Feeds
+
+    [Test]
+    public void a_profile_carries_no_feed_by_default()
+    {
+        TestModel.Profile( TestModel.ProfileVersion, TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ).Feeds.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void a_feed_name_appears_once_case_insensitively()
+    {
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion,
+                                                 default,
+                                                 null,
+                                                 [new PublishedFeed( "NuGet", "https://a" ), new PublishedFeed( "nuget", "https://b" )] ) )
+            .Message.ShouldStartWith( "Feed name 'nuget' appears more than once in the profile." );
+    }
+
+    [Test]
+    public void a_feed_has_one_credentials_shape()
+    {
+        Should.Throw<ArgumentException>( () => new PublishedFeed( "F", "https://f", secretKey: "K", publicReadUserName: "u", publicReadPassword: "p" ) )
+            .Message.ShouldStartWith( "Feed 'F': a secret key and public read credentials cannot be specified at the same time." );
+        Should.Throw<ArgumentException>( () => new PublishedFeed( "F", "https://f", publicReadUserName: "u" ) )
+            .Message.ShouldStartWith( "Feed 'F': the public read user name and password go together." );
+        Should.Throw<ArgumentException>( () => new PublishedFeed( "F", "https://f", secretKey: " " ) )
+            .Message.ShouldStartWith( "Feed 'F': the secret key cannot be white space." );
+        Should.Throw<ArgumentException>( () => new PublishedFeed( " ", "https://f" ) );
+        Should.Throw<ArgumentException>( () => new PublishedFeed( "F", "" ) );
+    }
+
+    [TestCase( "1.0.0", "Private" )]
+    [TestCase( "1.0.0-papa", "Private" )]
+    [TestCase( "1.0.0-alpha", "Private" )]
+    [TestCase( "1.0.1--ci.3", "Private" )]
+    public void the_push_targets_need_a_secret_key_and_an_accepting_filter( string version, string expected )
+    {
+        // "NuGet" accepts "[papa,]" but has no secret key: nothing is pushed to it. "GitHub" has no filter.
+        var p = TestModel.SampleProfile();
+        string.Join( ",", p.GetPushTargets( TestModel.V( version ) ).Select( f => f.Name ) ).ShouldBe( expected );
+    }
+
+    [Test]
+    public void a_push_target_filter_honors_the_version_kind_and_the_CI_flag()
+    {
+        var f = new PublishedFeed( "F", "https://f", new CSVersionKindFilter( "[papa,]" ), secretKey: "K" );
+        f.IsPushTargetOf( TestModel.V( "1.0.0" ) ).ShouldBeTrue();
+        f.IsPushTargetOf( TestModel.V( "1.0.0-papa" ) ).ShouldBeTrue();
+        f.IsPushTargetOf( TestModel.V( "1.0.0-alpha" ) ).ShouldBeFalse();
+        f.IsPushTargetOf( TestModel.V( "1.0.1--ci.3" ) ).ShouldBeFalse();
+    }
+
+    #endregion
+
     [Test]
     public void profile_compact_json_is_canonical()
     {
         var p = TestModel.SampleProfile();
 
         p.ToJsonString( indented: false ).ShouldBe( """
-            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"2026.11.21","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}],"DirectDependencies":["NUnit@4.2.2","System.Text.Json@9.0.0"],"TransitiveDependencies":{"Regular":["System.IO.Pipelines@9.0.0"],"Ambiguous":[{"Package":"CK.Two@1.2.3","ResolvedFrom":"ProducedPackages","Resolutions":[{"Version":"99.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Encodings.Web@9.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"9.0.0","Repositories":["AQAAAAAAAAA","AgAAAAAAAAA"]},{"Version":"8.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Json@9.0.0","ResolvedFrom":"DirectDependencies","Resolutions":[{"Version":"10.0.0","Repositories":["AgAAAAAAAAA"]}]}]}}
+            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"2026.11.21","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}],"DirectDependencies":["NUnit@4.2.2","System.Text.Json@9.0.0"],"TransitiveDependencies":{"Regular":["System.IO.Pipelines@9.0.0"],"Ambiguous":[{"Package":"CK.Two@1.2.3","ResolvedFrom":"ProducedPackages","Resolutions":[{"Version":"99.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Encodings.Web@9.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"9.0.0","Repositories":["AQAAAAAAAAA","AgAAAAAAAAA"]},{"Version":"8.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Json@9.0.0","ResolvedFrom":"DirectDependencies","Resolutions":[{"Version":"10.0.0","Repositories":["AgAAAAAAAAA"]}]}]},"Feeds":[{"Name":"Private","Url":"https://pkgs.dev.azure.com/X/_packaging/F/nuget/v3/index.json","PushQualityFilter":"[explo,stable],AllowCI","SecretKey":"AZURE_FEED_X_PAT"},{"Name":"NuGet","Url":"https://api.nuget.org/v3/index.json","PushQualityFilter":"[papa,stable]"},{"Name":"GitHub","Url":"https://nuget.pkg.github.com/X/index.json","PublicReadCredentials":{"UserName":"CKli","Password":"public-read-token"}}]}
             """ );
     }
 
@@ -534,6 +590,14 @@ public class ProfileTests
                                              .ShouldBe( p.TransitiveDependencies.Ambiguous.Select( a => a.ResolvedFrom ) );
         back.TransitiveDependencies.Ambiguous[1].Resolutions
             .ShouldBe( p.TransitiveDependencies.Ambiguous[1].Resolutions );
+        // Deprecate keeps the feeds, and their order is the configuration's.
+        back.Feeds.Select( f => f.Name ).ShouldBe( new[] { "Private", "NuGet", "GitHub" } );
+        back.Feeds[0].SecretKey.ShouldBe( "AZURE_FEED_X_PAT" );
+        back.Feeds[0].PushQualityFilter.ToString().ShouldBe( "[explo,stable],AllowCI" );
+        back.Feeds[1].SecretKey.ShouldBeNull();
+        back.Feeds[2].PushQualityFilter.ShouldBeNull();
+        back.Feeds[2].PublicReadUserName.ShouldBe( "CKli" );
+        back.Feeds[2].PublicReadPassword.ShouldBe( "public-read-token" );
 
         // The compact and the indented forms carry the same content.
         PublishedProfile.Parse( p.ToUtf8Bytes( indented: false ) ).ToJsonString().ShouldBe( p.ToJsonString() );
@@ -641,6 +705,16 @@ public class ProfileTests
                "Expected a string for 'Repositories', got 'Number'." )]
     [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"TransitiveDependencies":{"Ambiguous":[{"Package":"A@1.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"1.0.0","Repositories":["nope"]}]}]}}""",
                "Expected a valid RandomId for 'Repositories', got 'nope'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Feeds":{}}""",
+               "Expected an array for 'Feeds', got 'StartObject'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Feeds":[{"Url":"https://f"}]}""",
+               "Missing 'Name' property in 'PublishedFeed'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Feeds":[{"Name":"F"}]}""",
+               "Missing 'Url' property in 'PublishedFeed'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Feeds":[{"Name":"F","Url":"https://f","PushQualityFilter":"[papa,]nope"}]}""",
+               "Expected a \"[Min,Max],AllowCI\" filter for 'PushQualityFilter', got '[papa,]nope'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Feeds":[{"Name":"F","Url":"https://f","PublicReadCredentials":{"UserName":"u"}}]}""",
+               "Missing 'Password' property in 'PublicReadCredentials'." )]
     public void json_errors_are_explicit( string json, string message )
     {
         Should.Throw<JsonException>( () => PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) ) )

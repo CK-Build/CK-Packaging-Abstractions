@@ -92,6 +92,35 @@ compares the underlying array by reference).
 already flattened the frameworks away before a profile is built. Recovering them means making that
 stored format framework-qualified first; it is CKli's business, not this contract's.
 
+### Feeds
+
+A profile says which packages were published, and its `Feeds` say where to obtain them: the World's
+NuGet feeds when the profile was written, in their configuration order. With them, a profile is
+enough to restore, download or analyse its packages, with no access to the World's definition. They
+belong to a version, not to the index: an old profile keeps the feeds of its time when the World's
+feeds change later.
+
+A [`PublishedFeed`](PublishedFeed.cs) is a `Name` (unique in a profile, case insensitive: a
+`nuget.config` source key), a `Url` (as it appears in a `nuget.config`, a local folder included) and
+one of 3 shapes of credentials:
+
+- none: a true public feed (nuget.org);
+- `PublicReadUserName` and `PublicReadPassword`: a public feed that requires an authentication (the
+  GitHub feeds). They are not secrets: they are committed in the repositories' `nuget.config`;
+- `SecretKey`: a feed that requires a secret, to be read or to be pushed to. It is the **name** of the
+  secret in the publisher's store, never its value: a reader finds the credentials in its own NuGet
+  configuration or environment.
+
+**A profile never carries a secret.**
+
+`PushQualityFilter` (a `CSVersionKindFilter`, or null for a feed that is only read) tells which
+versions the publisher pushes to a feed. `PublishedFeed.IsPushTargetOf( version )` is the publisher's
+own rule (a `SecretKey` and a filter that accepts the version's kind and CI flag), and
+`PublishedProfile.GetPushTargets( version )` gives the feeds where a produced package is expected.
+A feed that is not a push target can still hold a package (a mirror, an upstream source).
+
+`Feeds` is empty for a profile written before they were recorded: this means *unknown*, not *none*.
+
 ### Deprecation
 
 Deprecation is the only state a published profile can still change, and it changes by producing a
@@ -262,7 +291,23 @@ reflection, no converters, no source generator, and the format is exactly what
         ]
       }
     ]
-  }
+  },
+  "Feeds": [
+    {
+      "Name": "NuGet",
+      "Url": "https://api.nuget.org/v3/index.json",
+      "PushQualityFilter": "[papa,stable]",
+      "SecretKey": "NUGET_ORG_PUSH_API_KEY"
+    },
+    {
+      "Name": "GitHub",
+      "Url": "https://nuget.pkg.github.com/Signature-Code/index.json",
+      "PublicReadCredentials": {
+        "UserName": "CKli",
+        "Password": "a-public-read-token"
+      }
+    }
+  ]
 }
 ```
 
@@ -277,8 +322,9 @@ A dependency's version is any **SemVer**: an external package is not bound to CS
 The API:
 
 - `Write( Utf8JsonWriter )` writes the object. `Repository.Write`, `TransitiveDependencies.Write`,
-  `AmbiguousDependency.Write` and `VersionResolution.Write` do the same for one of their own, and
-  each has the matching `Read`.
+  `AmbiguousDependency.Write`, `VersionResolution.Write` and `PublishedFeed.Write` do the same for one
+  of their own, and each has the matching `Read`. A feed writes its optional members only when they
+  are set, and its `PushQualityFilter` in the normalized form (`[papa,]` is `"[papa,stable]"`).
 - `Read( ref Utf8JsonReader )` must be given a reader on the `StartObject` token (or one that has
   not started yet) and **leaves it on the `EndObject` token**. That is the usual converter contract,
   so a profile can be one property of a bigger document.
@@ -298,10 +344,11 @@ property is skipped, so the format can grow, but a missing or malformed one thro
 naming the property. A document that parses but does not describe a coherent profile throws the
 constructor's `ArgumentException`.
 
-The two dependency sets are the exception to "missing throws": they are **optional**, absent means
-empty, and a profile written before they existed still parses. There is no file format version:
-an empty `TransitiveDependencies` and an absent one say the same thing, which is why none is needed.
-They are nevertheless always written, empty or not, so that every profile file has the same shape.
+The two dependency sets and the `Feeds` are the exception to "missing throws": they are
+**optional**, absent means empty, and a profile written before they existed still parses. There is
+no file format version: an empty set and an absent one say the same thing, which is why none is
+needed. They are nevertheless always written, empty or not, so that every profile file has the same
+shape.
 
 ## Where do profiles live?
 

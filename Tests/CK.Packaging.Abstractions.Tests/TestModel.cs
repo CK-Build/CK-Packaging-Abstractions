@@ -98,13 +98,42 @@ static class TestModel
                                             TransitiveDependencies? transitiveDependencies,
                                             params Repository[] repositories )
     {
+        return Profile( version, directDependencies, transitiveDependencies, default, repositories );
+    }
+
+    /// <summary>
+    /// Creates a profile of the <see cref="World"/> in the <see cref="StackUrl"/> stack with its dependencies
+    /// and its feeds.
+    /// </summary>
+    public static PublishedProfile Profile( string version,
+                                            ImmutableArray<PackageInstance> directDependencies,
+                                            TransitiveDependencies? transitiveDependencies,
+                                            ImmutableArray<PublishedFeed> feeds,
+                                            params Repository[] repositories )
+    {
         return new PublishedProfile( StackUrl,
                                      World,
                                      TV( version ),
                                      [.. repositories],
                                      directDependencies,
-                                     transitiveDependencies );
+                                     transitiveDependencies,
+                                     feeds: feeds );
     }
+
+    /// <summary>
+    /// The reference feeds, one of each shape, deliberately not ordered by name (the configuration order is kept):
+    /// a feed that requires a secret and receives every version (CI included), a true public feed that receives
+    /// the "papa" and better versions (but it has no secret key: nothing is pushed to it) and a public feed that
+    /// requires public read credentials.
+    /// </summary>
+    public static ImmutableArray<PublishedFeed> SampleFeeds =>
+    [
+        new PublishedFeed( "Private", "https://pkgs.dev.azure.com/X/_packaging/F/nuget/v3/index.json",
+                           new CSVersionKindFilter( "[,],AllowCI" ), secretKey: "AZURE_FEED_X_PAT" ),
+        new PublishedFeed( "NuGet", "https://api.nuget.org/v3/index.json", new CSVersionKindFilter( "[papa,]" ) ),
+        new PublishedFeed( "GitHub", "https://nuget.pkg.github.com/X/index.json",
+                           publicReadUserName: "CKli", publicReadPassword: "public-read-token" )
+    ];
 
     /// <summary>
     /// The reference direct dependencies: 2 external packages, deliberately not ordered.
@@ -143,9 +172,9 @@ static class TestModel
     }
 
     /// <summary>
-    /// Creates the reference profile: 2 repositories, 3 packages, 2 direct dependencies and the
-    /// <see cref="SampleTransitiveDependencies"/>. The repositories, the packages and the
-    /// dependencies are deliberately not ordered.
+    /// Creates the reference profile: 2 repositories, 3 packages, 2 direct dependencies, the
+    /// <see cref="SampleTransitiveDependencies"/> and the <see cref="SampleFeeds"/>. The repositories, the
+    /// packages and the dependencies are deliberately not ordered.
     /// </summary>
     /// <param name="version">The profile version.</param>
     /// <param name="packageVersion">The version of the produced packages.</param>
@@ -154,6 +183,7 @@ static class TestModel
         return Profile( version,
                         SampleDirectDependencies,
                         SampleTransitiveDependencies( packageVersion ),
+                        SampleFeeds,
                         Repo( "Two", 2, $"CK.Two@{packageVersion}" ),
                         Repo( "One", 1, $"CK.One.Sub@{packageVersion}", $"CK.One@{packageVersion}" ) );
     }

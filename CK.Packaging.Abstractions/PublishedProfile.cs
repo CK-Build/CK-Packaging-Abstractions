@@ -33,6 +33,7 @@ public sealed partial class PublishedProfile
     readonly Dictionary<string, PackageInstance> _producedPackages;
     readonly ImmutableArray<PackageInstance> _directDependencies;
     readonly TransitiveDependencies _transitiveDependencies;
+    readonly ImmutableArray<PublishedFeed> _feeds;
     readonly bool _isDeprecated;
     string? _toString;
 
@@ -67,13 +68,18 @@ public sealed partial class PublishedProfile
     /// Defaults to <see cref="Abstractions.TransitiveDependencies.Empty"/>.
     /// </param>
     /// <param name="isDeprecated">Whether this profile is deprecated.</param>
+    /// <param name="feeds">
+    /// The World's NuGet feeds when this profile is written, in their configuration order. Must not contain
+    /// the same <see cref="PublishedFeed.Name"/> twice (case insensitive). Defaults to empty.
+    /// </param>
     public PublishedProfile( Uri stackUrl,
                              WorldName world,
                              TimeVersion version,
                              ImmutableArray<Repository> repositories,
                              ImmutableArray<PackageInstance> directDependencies = default,
                              TransitiveDependencies? transitiveDependencies = null,
-                             bool isDeprecated = false )
+                             bool isDeprecated = false,
+                             ImmutableArray<PublishedFeed> feeds = default )
     {
         ArgumentNullException.ThrowIfNull( stackUrl );
         ArgumentNullException.ThrowIfNull( world );
@@ -96,6 +102,7 @@ public sealed partial class PublishedProfile
         _directDependencies = CreateDirectDependencies( directDependencies, _producedPackages, out var directIndex );
         _transitiveDependencies = transitiveDependencies ?? TransitiveDependencies.Empty;
         CheckTransitiveDependencies( _transitiveDependencies, directIndex, _producedPackages, repositoryIds );
+        _feeds = CheckFeeds( feeds );
         _stackUrl = stackUrl;
         _world = world;
         _version = version;
@@ -113,8 +120,32 @@ public sealed partial class PublishedProfile
         _producedPackages = o._producedPackages;
         _directDependencies = o._directDependencies;
         _transitiveDependencies = o._transitiveDependencies;
+        _feeds = o._feeds;
         _isDeprecated = isDeprecated;
         _toString = o._toString;
+    }
+
+    // The feeds keep their order (the World's configuration order is the order a reader should try them in):
+    // only the null and duplicate names are rejected. A feed name is a nuget.config source key, which NuGet
+    // compares case insensitively.
+    static ImmutableArray<PublishedFeed> CheckFeeds( ImmutableArray<PublishedFeed> feeds )
+    {
+        // A default array is an empty one: a profile written before the feeds existed carries none.
+        if( feeds.IsDefault ) return [];
+        var names = new HashSet<string>( StringComparer.OrdinalIgnoreCase );
+        for( int i = 0; i < feeds.Length; ++i )
+        {
+            var f = feeds[i];
+            if( f is null )
+            {
+                throw new ArgumentException( $"Null feed at index {i}.", nameof( feeds ) );
+            }
+            if( !names.Add( f.Name ) )
+            {
+                throw new ArgumentException( $"Feed name '{f.Name}' appears more than once in the profile.", nameof( feeds ) );
+            }
+        }
+        return feeds;
     }
 
     // Indexes the packages of the (sorted) repositories and checks the profile's coherency. The
@@ -324,6 +355,29 @@ public sealed partial class PublishedProfile
     /// no dependency information.
     /// </summary>
     public TransitiveDependencies TransitiveDependencies => _transitiveDependencies;
+
+    /// <summary>
+    /// Gets the World's NuGet feeds when this profile was written, in their configuration order: where its
+    /// packages can be obtained. Empty for a profile written before the feeds were recorded: this means
+    /// "unknown", not "none".
+    /// </summary>
+    public ImmutableArray<PublishedFeed> Feeds => _feeds;
+
+    /// <summary>
+    /// Gets the <see cref="Feeds"/> to which the publisher pushes a package version (see
+    /// <see cref="PublishedFeed.IsPushTargetOf(SVersion)"/>), in their configuration order. This is where a
+    /// <see cref="ProducedPackages"/> instance is expected to be found.
+    /// </summary>
+    /// <param name="version">The package version.</param>
+    /// <returns>The feeds that receive this version (possibly none).</returns>
+    public IEnumerable<PublishedFeed> GetPushTargets( SVersion version )
+    {
+        ArgumentNullException.ThrowIfNull( version );
+        foreach( var f in _feeds )
+        {
+            if( f.IsPushTargetOf( version ) ) yield return f;
+        }
+    }
 
     /// <summary>
     /// Updater that transitions <see cref="IsDeprecated"/> to true.

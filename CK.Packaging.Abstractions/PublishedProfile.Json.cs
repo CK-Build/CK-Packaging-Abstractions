@@ -37,6 +37,13 @@ public sealed partial class PublishedProfile
         w.WriteEndArray();
         w.WritePropertyName( "TransitiveDependencies" );
         _transitiveDependencies.Write( w );
+        // Same rule for the feeds: always written, optional on read.
+        w.WriteStartArray( "Feeds" );
+        foreach( var f in _feeds )
+        {
+            f.Write( w );
+        }
+        w.WriteEndArray();
         w.WriteEndObject();
     }
 
@@ -106,6 +113,7 @@ public sealed partial class PublishedProfile
         ImmutableArray<Repository>.Builder? repositories = null;
         ImmutableArray<PackageInstance>.Builder? directDependencies = null;
         TransitiveDependencies? transitiveDependencies = null;
+        ImmutableArray<PublishedFeed>.Builder? feeds = null;
         while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
         {
             var name = JsonHelper.StartProperty( ref r );
@@ -138,6 +146,15 @@ public sealed partial class PublishedProfile
                 case "TransitiveDependencies":
                     transitiveDependencies = TransitiveDependencies.Read( ref r );
                     break;
+                case "Feeds":
+                    JsonHelper.EnsureStartArray( ref r, name );
+                    feeds = ImmutableArray.CreateBuilder<PublishedFeed>();
+                    while( r.Read() && r.TokenType != JsonTokenType.EndArray )
+                    {
+                        feeds.Add( PublishedFeed.Read( ref r ) );
+                    }
+                    JsonHelper.EnsureEndArray( ref r, name );
+                    break;
                 default:
                     r.Skip();
                     break;
@@ -153,6 +170,8 @@ public sealed partial class PublishedProfile
                                      // means empty, there is no file format version to distinguish them.
                                      directDependencies?.DrainToImmutable() ?? [],
                                      transitiveDependencies,
-                                     isDeprecated );
+                                     isDeprecated,
+                                     // Optional too: absent means "unknown" (a profile written before).
+                                     feeds?.DrainToImmutable() ?? [] );
     }
 }
