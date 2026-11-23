@@ -266,6 +266,67 @@ public class PublishedIndexTests
 
     #endregion
 
+    #region LTSWorlds
+
+    [Test]
+    public void the_LTS_Worlds_are_ordered_and_written_after_the_sets()
+    {
+        var i = new PublishedIndex( Versions( "2026.11.21" ), [], ["@net8", "@net10"] );
+
+        i.LTSWorlds.ShouldBe( ["@net10", "@net8"] );
+        i.ToJsonString().ShouldBe( """
+            {
+              "Alive": {
+                "(stable)": [
+                  "2026.11.21"
+                ]
+              },
+              "Deprecated": {
+                "(stable)": []
+              },
+              "LTSWorlds": [
+                "@net10",
+                "@net8"
+              ]
+            }
+            """.ReplaceLineEndings( "\r\n" ) );
+        PublishedIndex.Parse( i.ToUtf8Bytes() ).ToJsonString().ShouldBe( i.ToJsonString() );
+    }
+
+    [Test]
+    public void an_index_without_LTS_Worlds_doesnt_write_them()
+    {
+        // The indexes of the LTS Worlds and of a Stack without LTS World are unchanged.
+        var i = PublishedIndex.Create( [TestModel.SampleProfile( "2026.11.20" )], ltsWorlds: [] );
+
+        i.LTSWorlds.ShouldBeEmpty();
+        i.ToJsonString( indented: false ).ShouldBe( """{"Alive":{"(stable)":["2026.11.20"]},"Deprecated":{"(stable)":[]}}""" );
+        PublishedIndex.Parse( Encoding.UTF8.GetBytes( """{ "LTSWorlds": [] }""" ) ).ShouldBeSameAs( PublishedIndex.Empty );
+    }
+
+    [Test]
+    public void an_index_can_name_LTS_Worlds_without_any_version()
+    {
+        // The default World's index right after "ckli lts create": its versions moved to the new LTS World.
+        var i = PublishedIndex.Parse( Encoding.UTF8.GetBytes( """{ "LTSWorlds": [ "@net8" ] }""" ) );
+
+        i.IsEmpty.ShouldBeTrue();
+        i.LTSWorlds.ShouldBe( ["@net8"] );
+    }
+
+    [TestCase( "net8", "Invalid LTS World name 'net8'." )]
+    [TestCase( "@Net8", "Invalid LTS World name '@Net8'." )]
+    [TestCase( "@net8,@net8", "LTS World '@net8' appears more than once." )]
+    public void invalid_LTS_Worlds_are_refused( string names, string message )
+    {
+        Should.Throw<ArgumentException>( () => new PublishedIndex( [], [], names.Split( ',' ) ) )
+              .Message.ShouldStartWith( message );
+        Should.Throw<JsonException>( () => PublishedIndex.Parse( Encoding.UTF8.GetBytes( $$"""{ "LTSWorlds": [ "{{names.Replace( ",", "\",\"" )}}" ] }""" ) ) )
+              .Message.ShouldBe( message.TrimEnd( '.' ) + " in 'LTSWorlds'." );
+    }
+
+    #endregion
+
     static ImmutableArray<TimeVersion> Versions( params string[] versions ) => [.. versions.Select( TestModel.TV )];
 
     static string[] Text( ImmutableArray<TimeVersion> versions ) => [.. versions.Select( v => v.ToString() )];

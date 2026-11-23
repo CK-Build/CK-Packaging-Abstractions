@@ -272,6 +272,27 @@ always has the root list to read. Every other group exists only because a versio
 A version identifies a profile, hence a file, so it appears **once** across the two sets: a
 duplicate - or the same version listed as both alive and deprecated - throws.
 
+### LTSWorlds
+
+A consumer that only knows a Stack url can't list its Worlds: a raw url can't list a folder. So the
+index of a Stack's **default** World names the Long Term Support Worlds that publish, by their
+`LTSName`:
+
+```json
+{
+  "Alive": { "(stable)": [ "2026.11.21" ] },
+  "Deprecated": { "(stable)": [] },
+  "LTSWorlds": [ "@net8" ]
+}
+```
+
+The Stack url leads to this index: it is the entry point. The full name of an LTS World is
+`{StackName}{LTSName}` and its own index is in `{LTSName}/Published/index.json`. The names are valid
+LTS names (`WorldName.IsValidLTSName`), distinct and in ordinal order.
+
+`LTSWorlds` is written only when not empty: the indexes of the LTS Worlds, and of a Stack without
+any, are unchanged. Empty means "none or unknown" - an index written before it has none.
+
 ## Json serialization
 
 Serialization uses the **basic** `Utf8JsonWriter` and `Utf8JsonReader`, not `JsonSerializer`: no

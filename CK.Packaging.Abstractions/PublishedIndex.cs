@@ -28,6 +28,7 @@ public sealed class PublishedIndex
 {
     readonly SortedDictionary<string, ImmutableArray<TimeVersion>> _alive;
     readonly SortedDictionary<string, ImmutableArray<TimeVersion>> _deprecated;
+    readonly ImmutableArray<string> _ltsWorlds;
 
     /// <summary>
     /// The conventional file name of an index: "index.json".
@@ -94,10 +95,15 @@ public sealed class PublishedIndex
     /// The versions of the <see cref="PublishedProfile.IsDeprecated"/> profiles. Each must appear once
     /// across both sets.
     /// </param>
-    public PublishedIndex( IEnumerable<TimeVersion> alive, IEnumerable<TimeVersion> deprecated )
+    /// <param name="ltsWorlds">
+    /// The <see cref="LTSWorlds"/>: valid and distinct <see cref="WorldName.LTSName"/>, in any order.
+    /// Null for none.
+    /// </param>
+    public PublishedIndex( IEnumerable<TimeVersion> alive, IEnumerable<TimeVersion> deprecated, IEnumerable<string>? ltsWorlds = null )
     {
         ArgumentNullException.ThrowIfNull( alive );
         ArgumentNullException.ThrowIfNull( deprecated );
+        _ltsWorlds = CheckLTSWorlds( ltsWorlds );
         // A profile version identifies a profile - one file - so it belongs to exactly one of the two
         // sets: this also catches the same version listed twice in one of them.
         var all = new Dictionary<TimeVersion, bool>();
@@ -146,13 +152,32 @@ public sealed class PublishedIndex
         }
     }
 
+    static ImmutableArray<string> CheckLTSWorlds( IEnumerable<string>? ltsWorlds )
+    {
+        if( ltsWorlds == null ) return [];
+        var names = new SortedSet<string>( StringComparer.Ordinal );
+        foreach( var n in ltsWorlds )
+        {
+            if( n is null || !WorldName.IsValidLTSName( n ) )
+            {
+                throw new ArgumentException( $"Invalid LTS World name '{n}'.", nameof( ltsWorlds ) );
+            }
+            if( !names.Add( n ) )
+            {
+                throw new ArgumentException( $"LTS World '{n}' appears more than once.", nameof( ltsWorlds ) );
+            }
+        }
+        return names.ToImmutableArray();
+    }
+
     /// <summary>
     /// Creates an index of the specified profiles, splitting them on their
     /// <see cref="PublishedProfile.IsDeprecated"/>.
     /// </summary>
     /// <param name="profiles">The profiles to index.</param>
+    /// <param name="ltsWorlds">The <see cref="LTSWorlds"/>. Null for none.</param>
     /// <returns>The index.</returns>
-    public static PublishedIndex Create( IEnumerable<PublishedProfile> profiles )
+    public static PublishedIndex Create( IEnumerable<PublishedProfile> profiles, IEnumerable<string>? ltsWorlds = null )
     {
         ArgumentNullException.ThrowIfNull( profiles );
         var alive = new List<TimeVersion>();
@@ -165,8 +190,21 @@ public sealed class PublishedIndex
             }
             (p.IsDeprecated ? deprecated : alive).Add( p.Version );
         }
-        return new PublishedIndex( alive, deprecated );
+        return new PublishedIndex( alive, deprecated, ltsWorlds );
     }
+
+    /// <summary>
+    /// Gets the <see cref="WorldName.LTSName"/> of the Long Term Support Worlds of the Stack that publish
+    /// (they have a "{LTSName}/Published" folder), in ordinal order.
+    /// <para>
+    /// Only the index of a Stack's default World names them: the Stack url leads to it, it is the entry
+    /// point. The full name of a World is "{StackName}{LTSName}" and its index is in "{LTSName}/Published/".
+    /// </para>
+    /// <para>
+    /// Empty means "none or unknown": an index written before this property existed has none.
+    /// </para>
+    /// </summary>
+    public ImmutableArray<string> LTSWorlds => _ltsWorlds;
 
     /// <summary>
     /// Gets the versions of the profiles that are not deprecated, by group name in ordinal order, each
@@ -286,6 +324,16 @@ public sealed class PublishedIndex
         w.WriteStartObject();
         WriteSet( w, "Alive", _alive );
         WriteSet( w, "Deprecated", _deprecated );
+        // Only the index of a default World that has LTS Worlds names them: the other indexes are unchanged.
+        if( _ltsWorlds.Length > 0 )
+        {
+            w.WriteStartArray( "LTSWorlds" );
+            foreach( var n in _ltsWorlds )
+            {
+                w.WriteStringValue( n );
+            }
+            w.WriteEndArray();
+        }
         w.WriteEndObject();
 
         static void WriteSet( Utf8JsonWriter w, string setName, SortedDictionary<string, ImmutableArray<TimeVersion>> set )
@@ -369,6 +417,7 @@ public sealed class PublishedIndex
         JsonHelper.EnsureStartObject( ref r, nameof( PublishedIndex ) );
         List<TimeVersion>? alive = null;
         List<TimeVersion>? deprecated = null;
+        List<string>? ltsWorlds = null;
         while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
         {
             var name = JsonHelper.StartProperty( ref r );
@@ -380,6 +429,24 @@ public sealed class PublishedIndex
                 case "Deprecated":
                     deprecated = ReadSet( ref r, name );
                     break;
+                case "LTSWorlds":
+                    JsonHelper.EnsureStartArray( ref r, name );
+                    ltsWorlds = new List<string>();
+                    while( r.Read() && r.TokenType != JsonTokenType.EndArray )
+                    {
+                        var n = JsonHelper.GetString( ref r, name );
+                        if( !WorldName.IsValidLTSName( n ) )
+                        {
+                            throw new JsonException( $"Invalid LTS World name '{n}' in '{name}'." );
+                        }
+                        if( ltsWorlds.Contains( n ) )
+                        {
+                            throw new JsonException( $"LTS World '{n}' appears more than once in '{name}'." );
+                        }
+                        ltsWorlds.Add( n );
+                    }
+                    JsonHelper.EnsureEndArray( ref r, name );
+                    break;
                 default:
                     r.Skip();
                     break;
@@ -387,9 +454,10 @@ public sealed class PublishedIndex
         }
         JsonHelper.EnsureEndObject( ref r, nameof( PublishedIndex ) );
         // An absent set is an empty one: the format can grow and the constructor seeds the stable group.
-        return alive == null && deprecated == null
+        // An absent LTSWorlds is an empty one (the indexes written before it).
+        return alive == null && deprecated == null && (ltsWorlds == null || ltsWorlds.Count == 0)
                 ? Empty
-                : new PublishedIndex( alive ?? [], deprecated ?? [] );
+                : new PublishedIndex( alive ?? [], deprecated ?? [], ltsWorlds );
 
         static List<TimeVersion> ReadSet( ref Utf8JsonReader r, string setName )
         {
