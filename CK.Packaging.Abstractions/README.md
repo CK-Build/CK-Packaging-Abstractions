@@ -29,6 +29,7 @@ What the constructor enforces:
   calling it coherent, and violating it throws rather than picking a winner.
 - No two repositories share a `RepositoryKey.Url` or a `RepositoryKey.Id`.
 - The optional dependency sets agree with the produced packages - see below.
+- The optional `Upstreams` name each upstream World once, and never the profile's own World - see below.
 
 > The coherency is a shallow one: the packages of a profile agree with each other, but their deeper,
 transitive dependencies are not guaranteed to be aligned.
@@ -120,6 +121,30 @@ own rule (a `SecretKey` and a filter that accepts the version's kind and CI flag
 A feed that is not a push target can still hold a package (a mirror, an upstream source).
 
 `Feeds` is empty for a profile written before they were recorded: this means *unknown*, not *none*.
+
+### Upstreams
+
+A World consumes the packages of other Worlds, its World References, and is aligned on one profile of
+each. The `Upstreams` of a profile name these profiles. The packages the World consumes from an upstream
+World are the ones that upstream profile produces. This is how a consumer of a downstream profile finds the
+rest of the coherent set, such as an Engine that the downstream World never references: it follows the
+chain, from the profile to its `Upstreams`, then to theirs.
+
+An [`UpstreamProfile`](UpstreamProfile.cs) identifies a profile, it doesn't carry it:
+
+- `StackUrl`: the upstream Stack repository url, which must be absolute;
+- `World`: the upstream `WorldName` (a Long Term Support World is another World: `CK@net8`);
+- `Version`: the upstream profile's `TimeVersion`.
+
+That is enough to read it: `PublishedProfile.GetProfilePath( version, folder )` in the upstream's
+published folder. `new UpstreamProfile( profile )` identifies an existing profile.
+
+The constructor refuses two upstreams of the same World (same `StackUrl`, case insensitive, and same
+`World`: `UpstreamProfile.IsSameWorld`), and an upstream of the profile's own World. The upstreams keep
+their order. `Deprecate` keeps them.
+
+`Upstreams` is empty for a profile written before they were recorded, or whose World was not verified to be
+aligned on its references: this means *unknown*, not *none*.
 
 ### Deprecation
 
@@ -307,6 +332,13 @@ reflection, no converters, no source generator, and the format is exactly what
         "Password": "a-public-read-token"
       }
     }
+  ],
+  "Upstreams": [
+    {
+      "StackUrl": "https://github.com/signature-opensource/CK-Stack",
+      "World": "CK",
+      "Version": "2026.11.20"
+    }
   ]
 }
 ```
@@ -322,7 +354,7 @@ A dependency's version is any **SemVer**: an external package is not bound to CS
 The API:
 
 - `Write( Utf8JsonWriter )` writes the object. `Repository.Write`, `TransitiveDependencies.Write`,
-  `AmbiguousDependency.Write`, `VersionResolution.Write` and `PublishedFeed.Write` do the same for one
+  `AmbiguousDependency.Write`, `VersionResolution.Write`, `PublishedFeed.Write` and `UpstreamProfile.Write` do the same for one
   of their own, and each has the matching `Read`. A feed writes its optional members only when they
   are set, and its `PushQualityFilter` in the normalized form (`[papa,]` is `"[papa,stable]"`).
 - `Read( ref Utf8JsonReader )` must be given a reader on the `StartObject` token (or one that has
@@ -344,7 +376,7 @@ property is skipped, so the format can grow, but a missing or malformed one thro
 naming the property. A document that parses but does not describe a coherent profile throws the
 constructor's `ArgumentException`.
 
-The two dependency sets and the `Feeds` are the exception to "missing throws": they are
+The two dependency sets, the `Feeds` and the `Upstreams` are the exception to "missing throws": they are
 **optional**, absent means empty, and a profile written before they existed still parses. There is
 no file format version: an empty set and an absent one say the same thing, which is why none is
 needed. They are nevertheless always written, empty or not, so that every profile file has the same

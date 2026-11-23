@@ -34,6 +34,7 @@ public sealed partial class PublishedProfile
     readonly ImmutableArray<PackageInstance> _directDependencies;
     readonly TransitiveDependencies _transitiveDependencies;
     readonly ImmutableArray<PublishedFeed> _feeds;
+    readonly ImmutableArray<UpstreamProfile> _upstreams;
     readonly bool _isDeprecated;
     string? _toString;
 
@@ -72,6 +73,11 @@ public sealed partial class PublishedProfile
     /// The World's NuGet feeds when this profile is written, in their configuration order. Must not contain
     /// the same <see cref="PublishedFeed.Name"/> twice (case insensitive). Defaults to empty.
     /// </param>
+    /// <param name="upstreams">
+    /// The profiles of the World References this profile was aligned on. Must not contain two profiles of the
+    /// same World (see <see cref="UpstreamProfile.IsSameWorld(UpstreamProfile)"/>) nor one of this profile's
+    /// own World. Defaults to empty.
+    /// </param>
     public PublishedProfile( Uri stackUrl,
                              WorldName world,
                              TimeVersion version,
@@ -79,7 +85,8 @@ public sealed partial class PublishedProfile
                              ImmutableArray<PackageInstance> directDependencies = default,
                              TransitiveDependencies? transitiveDependencies = null,
                              bool isDeprecated = false,
-                             ImmutableArray<PublishedFeed> feeds = default )
+                             ImmutableArray<PublishedFeed> feeds = default,
+                             ImmutableArray<UpstreamProfile> upstreams = default )
     {
         ArgumentNullException.ThrowIfNull( stackUrl );
         ArgumentNullException.ThrowIfNull( world );
@@ -103,6 +110,7 @@ public sealed partial class PublishedProfile
         _transitiveDependencies = transitiveDependencies ?? TransitiveDependencies.Empty;
         CheckTransitiveDependencies( _transitiveDependencies, directIndex, _producedPackages, repositoryIds );
         _feeds = CheckFeeds( feeds );
+        _upstreams = CheckUpstreams( upstreams, stackUrl, world );
         _stackUrl = stackUrl;
         _world = world;
         _version = version;
@@ -121,6 +129,7 @@ public sealed partial class PublishedProfile
         _directDependencies = o._directDependencies;
         _transitiveDependencies = o._transitiveDependencies;
         _feeds = o._feeds;
+        _upstreams = o._upstreams;
         _isDeprecated = isDeprecated;
         _toString = o._toString;
     }
@@ -146,6 +155,36 @@ public sealed partial class PublishedProfile
             }
         }
         return feeds;
+    }
+
+    // The upstreams keep their order (the World References' order). A World is aligned on at most one profile of
+    // another World, and never on one of its own.
+    static ImmutableArray<UpstreamProfile> CheckUpstreams( ImmutableArray<UpstreamProfile> upstreams, Uri stackUrl, WorldName world )
+    {
+        // A default array is an empty one: a profile written before the upstreams existed carries none.
+        if( upstreams.IsDefault ) return [];
+        for( int i = 0; i < upstreams.Length; ++i )
+        {
+            var u = upstreams[i];
+            if( u is null )
+            {
+                throw new ArgumentException( $"Null upstream profile at index {i}.", nameof( upstreams ) );
+            }
+            if( u.IsSameWorld( stackUrl, world ) )
+            {
+                throw new ArgumentException( $"Upstream profile '{u}' is a profile of this profile's own World.", nameof( upstreams ) );
+            }
+            for( int j = 0; j < i; ++j )
+            {
+                if( upstreams[j].IsSameWorld( u ) )
+                {
+                    throw new ArgumentException( $"Upstream profiles '{upstreams[j]}' and '{u}' are profiles of the same World "
+                                                 + $"('{u.StackUrl}').",
+                                                 nameof( upstreams ) );
+                }
+            }
+        }
+        return upstreams;
     }
 
     // Indexes the packages of the (sorted) repositories and checks the profile's coherency. The
@@ -362,6 +401,17 @@ public sealed partial class PublishedProfile
     /// "unknown", not "none".
     /// </summary>
     public ImmutableArray<PublishedFeed> Feeds => _feeds;
+
+    /// <summary>
+    /// Gets the profiles of the World References (the upstream Worlds) this profile was aligned on: the packages
+    /// its repositories consume from such an upstream World are the ones that upstream profile produces. They are
+    /// in the World References' order.
+    /// <para>
+    /// Empty for a profile written before the upstreams were recorded, or whose World has no reference it was
+    /// verified to be aligned on: this means "unknown", not "none".
+    /// </para>
+    /// </summary>
+    public ImmutableArray<UpstreamProfile> Upstreams => _upstreams;
 
     /// <summary>
     /// Gets the <see cref="Feeds"/> to which the publisher pushes a package version (see

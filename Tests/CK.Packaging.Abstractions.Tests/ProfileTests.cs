@@ -474,8 +474,9 @@ public class ProfileTests
 
         p.DirectDependencies.ShouldBeEmpty();
         p.TransitiveDependencies.ShouldBeSameAs( TransitiveDependencies.Empty );
-        // The feeds too: absent means "unknown".
+        // The feeds too: absent means "unknown". And the upstreams.
         p.Feeds.ShouldBeEmpty();
+        p.Upstreams.ShouldBeEmpty();
 
         // Same for the 2 lists of an existing TransitiveDependencies object.
         var partial = """
@@ -550,13 +551,58 @@ public class ProfileTests
 
     #endregion
 
+    #region Upstreams
+
+    [Test]
+    public void a_profile_carries_no_upstream_by_default()
+    {
+        TestModel.Profile( TestModel.ProfileVersion, TestModel.Repo( "One", 1, "CK.One@1.0.0" ) ).Upstreams.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void an_upstream_World_appears_once()
+    {
+        // Same Stack url (case insensitive) and same World: two profiles of one World.
+        var u1 = new UpstreamProfile( new Uri( "https://github.com/signature-opensource/CK-Stack" ), WorldName.Parse( "CK" ), TestModel.TV( "2026.11.20" ) );
+        var u2 = new UpstreamProfile( new Uri( "https://github.com/Signature-OpenSource/CK-Stack" ), WorldName.Parse( "ck" ), TestModel.TV( "2026.11.21" ) );
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion, default, null, default, [u1, u2] ) )
+            .Message.ShouldStartWith( "Upstream profiles 'CK/v2026.11.20' and 'ck/v2026.11.21' are profiles of the same World "
+                                      + "('https://github.com/Signature-OpenSource/CK-Stack')." );
+
+        // Another World of the same Stack is another upstream.
+        var lts = new UpstreamProfile( u1.StackUrl, WorldName.Parse( "CK@net8" ), TestModel.TV( "2026.11.20" ) );
+        TestModel.Profile( TestModel.ProfileVersion, default, null, default, [u1, lts] ).Upstreams.Length.ShouldBe( 2 );
+    }
+
+    [Test]
+    public void a_profile_is_not_its_own_upstream()
+    {
+        var self = new UpstreamProfile( TestModel.StackUrl, TestModel.World, TestModel.TV( "2026.11.20" ) );
+        Should.Throw<ArgumentException>( () => TestModel.Profile( TestModel.ProfileVersion, default, null, default, [self] ) )
+            .Message.ShouldStartWith( "Upstream profile 'CKt/v2026.11.20' is a profile of this profile's own World." );
+    }
+
+    [Test]
+    public void an_upstream_identifies_a_profile()
+    {
+        var upstream = TestModel.SampleProfile( "2026.11.20" );
+        var u = new UpstreamProfile( upstream );
+        u.StackUrl.ShouldBe( upstream.StackUrl );
+        u.World.ShouldBe( upstream.World );
+        u.Version.ShouldBe( upstream.Version );
+        u.ToString().ShouldBe( upstream.ToString() );
+        Should.Throw<ArgumentException>( () => new UpstreamProfile( new Uri( "x/y", UriKind.Relative ), TestModel.World, TestModel.TV( "2026.11.20" ) ) );
+    }
+
+    #endregion
+
     [Test]
     public void profile_compact_json_is_canonical()
     {
         var p = TestModel.SampleProfile();
 
         p.ToJsonString( indented: false ).ShouldBe( """
-            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"2026.11.21","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}],"DirectDependencies":["NUnit@4.2.2","System.Text.Json@9.0.0"],"TransitiveDependencies":{"Regular":["System.IO.Pipelines@9.0.0"],"Ambiguous":[{"Package":"CK.Two@1.2.3","ResolvedFrom":"ProducedPackages","Resolutions":[{"Version":"99.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Encodings.Web@9.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"9.0.0","Repositories":["AQAAAAAAAAA","AgAAAAAAAAA"]},{"Version":"8.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Json@9.0.0","ResolvedFrom":"DirectDependencies","Resolutions":[{"Version":"10.0.0","Repositories":["AgAAAAAAAAA"]}]}]},"Feeds":[{"Name":"Private","Url":"https://pkgs.dev.azure.com/X/_packaging/F/nuget/v3/index.json","PushQualityFilter":"[explo,stable],AllowCI","SecretKey":"AZURE_FEED_X_PAT"},{"Name":"NuGet","Url":"https://api.nuget.org/v3/index.json","PushQualityFilter":"[papa,stable]"},{"Name":"GitHub","Url":"https://nuget.pkg.github.com/X/index.json","PublicReadCredentials":{"UserName":"CKli","Password":"public-read-token"}}]}
+            {"StackUrl":"https://github.com/Signature-Code/CKt-Stack","World":"CKt","Version":"2026.11.21","IsDeprecated":false,"Repositories":[{"Url":"https://github.com/Signature-Code/CKt-One","Id":"AQAAAAAAAAA","Packages":["CK.One@1.2.3","CK.One.Sub@1.2.3"]},{"Url":"https://github.com/Signature-Code/CKt-Two","Id":"AgAAAAAAAAA","Packages":["CK.Two@1.2.3"]}],"DirectDependencies":["NUnit@4.2.2","System.Text.Json@9.0.0"],"TransitiveDependencies":{"Regular":["System.IO.Pipelines@9.0.0"],"Ambiguous":[{"Package":"CK.Two@1.2.3","ResolvedFrom":"ProducedPackages","Resolutions":[{"Version":"99.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Encodings.Web@9.0.0","ResolvedFrom":"TransitiveDependencies","Resolutions":[{"Version":"9.0.0","Repositories":["AQAAAAAAAAA","AgAAAAAAAAA"]},{"Version":"8.0.0","Repositories":["AQAAAAAAAAA"]}]},{"Package":"System.Text.Json@9.0.0","ResolvedFrom":"DirectDependencies","Resolutions":[{"Version":"10.0.0","Repositories":["AgAAAAAAAAA"]}]}]},"Feeds":[{"Name":"Private","Url":"https://pkgs.dev.azure.com/X/_packaging/F/nuget/v3/index.json","PushQualityFilter":"[explo,stable],AllowCI","SecretKey":"AZURE_FEED_X_PAT"},{"Name":"NuGet","Url":"https://api.nuget.org/v3/index.json","PushQualityFilter":"[papa,stable]"},{"Name":"GitHub","Url":"https://nuget.pkg.github.com/X/index.json","PublicReadCredentials":{"UserName":"CKli","Password":"public-read-token"}}],"Upstreams":[{"StackUrl":"https://github.com/signature-opensource/CK-Stack","World":"CK","Version":"2026.11.20"},{"StackUrl":"https://github.com/Signature-Code/Base-Stack","World":"Base@net8","Version":"2026.10.2.1"}]}
             """ );
     }
 
@@ -598,6 +644,9 @@ public class ProfileTests
         back.Feeds[2].PushQualityFilter.ShouldBeNull();
         back.Feeds[2].PublicReadUserName.ShouldBe( "CKli" );
         back.Feeds[2].PublicReadPassword.ShouldBe( "public-read-token" );
+        // Deprecate keeps the upstreams too, in their order.
+        back.Upstreams.Select( u => u.ToString() ).ShouldBe( new[] { "CK/v2026.11.20", "Base@net8/v2026.10.2.1" } );
+        back.Upstreams[0].StackUrl.ShouldBe( new Uri( "https://github.com/signature-opensource/CK-Stack" ) );
 
         // The compact and the indented forms carry the same content.
         PublishedProfile.Parse( p.ToUtf8Bytes( indented: false ) ).ToJsonString().ShouldBe( p.ToJsonString() );
@@ -715,6 +764,10 @@ public class ProfileTests
                "Expected a \"[Min,Max],AllowCI\" filter for 'PushQualityFilter', got '[papa,]nope'." )]
     [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Feeds":[{"Name":"F","Url":"https://f","PublicReadCredentials":{"UserName":"u"}}]}""",
                "Missing 'Password' property in 'PublicReadCredentials'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Upstreams":[{"StackUrl":"https://u/v","World":"CK"}]}""",
+               "Missing 'Version' property in 'UpstreamProfile'." )]
+    [TestCase( """{"StackUrl":"https://x/y","World":"CKt","Version":"2026.11.21","Repositories":[],"Upstreams":[{"StackUrl":"u/v","World":"CK","Version":"2026.11.21"}]}""",
+               "Expected an absolute url for 'StackUrl', got 'u/v'." )]
     public void json_errors_are_explicit( string json, string message )
     {
         Should.Throw<JsonException>( () => PublishedProfile.Parse( Encoding.UTF8.GetBytes( json ) ) )

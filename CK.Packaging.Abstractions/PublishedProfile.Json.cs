@@ -44,6 +44,13 @@ public sealed partial class PublishedProfile
             f.Write( w );
         }
         w.WriteEndArray();
+        // And for the upstreams.
+        w.WriteStartArray( "Upstreams" );
+        foreach( var u in _upstreams )
+        {
+            u.Write( w );
+        }
+        w.WriteEndArray();
         w.WriteEndObject();
     }
 
@@ -114,6 +121,7 @@ public sealed partial class PublishedProfile
         ImmutableArray<PackageInstance>.Builder? directDependencies = null;
         TransitiveDependencies? transitiveDependencies = null;
         ImmutableArray<PublishedFeed>.Builder? feeds = null;
+        ImmutableArray<UpstreamProfile>.Builder? upstreams = null;
         while( r.Read() && r.TokenType == JsonTokenType.PropertyName )
         {
             var name = JsonHelper.StartProperty( ref r );
@@ -155,6 +163,15 @@ public sealed partial class PublishedProfile
                     }
                     JsonHelper.EnsureEndArray( ref r, name );
                     break;
+                case "Upstreams":
+                    JsonHelper.EnsureStartArray( ref r, name );
+                    upstreams = ImmutableArray.CreateBuilder<UpstreamProfile>();
+                    while( r.Read() && r.TokenType != JsonTokenType.EndArray )
+                    {
+                        upstreams.Add( UpstreamProfile.Read( ref r ) );
+                    }
+                    JsonHelper.EnsureEndArray( ref r, name );
+                    break;
                 default:
                     r.Skip();
                     break;
@@ -172,6 +189,8 @@ public sealed partial class PublishedProfile
                                      transitiveDependencies,
                                      isDeprecated,
                                      // Optional too: absent means "unknown" (a profile written before).
-                                     feeds?.DrainToImmutable() ?? [] );
+                                     feeds?.DrainToImmutable() ?? [],
+                                     // Optional as well, with the same meaning.
+                                     upstreams?.DrainToImmutable() ?? [] );
     }
 }

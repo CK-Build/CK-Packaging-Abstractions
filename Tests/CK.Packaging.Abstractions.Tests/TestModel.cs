@@ -111,14 +111,39 @@ static class TestModel
                                             ImmutableArray<PublishedFeed> feeds,
                                             params Repository[] repositories )
     {
+        return Profile( version, directDependencies, transitiveDependencies, feeds, default, repositories );
+    }
+
+    /// <summary>
+    /// Creates a profile of the <see cref="World"/> in the <see cref="StackUrl"/> stack with its dependencies,
+    /// its feeds and its upstreams.
+    /// </summary>
+    public static PublishedProfile Profile( string version,
+                                            ImmutableArray<PackageInstance> directDependencies,
+                                            TransitiveDependencies? transitiveDependencies,
+                                            ImmutableArray<PublishedFeed> feeds,
+                                            ImmutableArray<UpstreamProfile> upstreams,
+                                            params Repository[] repositories )
+    {
         return new PublishedProfile( StackUrl,
                                      World,
                                      TV( version ),
                                      [.. repositories],
                                      directDependencies,
                                      transitiveDependencies,
-                                     feeds: feeds );
+                                     feeds: feeds,
+                                     upstreams: upstreams );
     }
+
+    /// <summary>
+    /// The reference upstreams, deliberately not ordered: a profile of the default World of an upstream Stack and
+    /// a profile of a Long Term Support World of another one.
+    /// </summary>
+    public static ImmutableArray<UpstreamProfile> SampleUpstreams =>
+    [
+        new UpstreamProfile( new Uri( "https://github.com/signature-opensource/CK-Stack" ), WorldName.Parse( "CK" ), TV( "2026.11.20" ) ),
+        new UpstreamProfile( new Uri( "https://github.com/Signature-Code/Base-Stack" ), WorldName.Parse( "Base@net8" ), TV( "2026.10.2.1" ) )
+    ];
 
     /// <summary>
     /// The reference feeds, one of each shape, deliberately not ordered by name (the configuration order is kept):
@@ -173,7 +198,7 @@ static class TestModel
 
     /// <summary>
     /// Creates the reference profile: 2 repositories, 3 packages, 2 direct dependencies, the
-    /// <see cref="SampleTransitiveDependencies"/> and the <see cref="SampleFeeds"/>. The repositories, the
+    /// <see cref="SampleTransitiveDependencies"/>, the <see cref="SampleFeeds"/> and the <see cref="SampleUpstreams"/>. The repositories, the
     /// packages and the dependencies are deliberately not ordered.
     /// </summary>
     /// <param name="version">The profile version.</param>
@@ -184,6 +209,7 @@ static class TestModel
                         SampleDirectDependencies,
                         SampleTransitiveDependencies( packageVersion ),
                         SampleFeeds,
+                        SampleUpstreams,
                         Repo( "Two", 2, $"CK.Two@{packageVersion}" ),
                         Repo( "One", 1, $"CK.One.Sub@{packageVersion}", $"CK.One@{packageVersion}" ) );
     }
